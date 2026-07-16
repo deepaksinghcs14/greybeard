@@ -48,8 +48,8 @@ file greybeard creates itself. Grab a prebuilt binary from
 
 ```sh
 # macOS Apple Silicon (see Releases for darwin/linux/windows, amd64/arm64)
-curl -L https://github.com/deepaksinghcs14/greybeard/releases/latest/download/greybeard_darwin_arm64 -o /usr/local/bin/greybeard
-chmod +x /usr/local/bin/greybeard
+sudo curl -L https://github.com/deepaksinghcs14/greybeard/releases/latest/download/greybeard_darwin_arm64 -o /usr/local/bin/greybeard
+sudo chmod +x /usr/local/bin/greybeard
 ```
 
 or build from source if you have Go:
