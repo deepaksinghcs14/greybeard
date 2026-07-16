@@ -23,11 +23,20 @@ const releaseRepo = "deepaksinghcs14/greybeard"
 func cmdUpdate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	quiet := fs.Bool("quiet", false, "no output (used by the background auto-update)")
+	force := fs.Bool("force", false, "replace a from-source (\"dev\") build with the latest release anyway")
 	fs.Parse(args)
 	say := func(format string, a ...any) {
 		if !*quiet {
 			fmt.Printf(format+"\n", a...)
 		}
+	}
+
+	// Same rule maybeAutoUpdate already applies to the background path: a
+	// from-source build is the developer's own business, never silently
+	// replaced. --force is the deliberate opt-out.
+	if version == "dev" && !*force {
+		say("greybeard dev (from-source build) — nothing to update to, your build stays in charge.\nRun `greybeard update --force` to replace it with the latest release anyway.")
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)

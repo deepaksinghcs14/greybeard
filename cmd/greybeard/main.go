@@ -28,7 +28,8 @@ Usage:
   greybeard serve                    MCP server over stdio
   greybeard visualize [--port 7333]  open the graph in your browser
   greybeard audit                    read-only health report: empty and stale repos
-  greybeard update                   self-update to the latest release
+  greybeard update [--force]         self-update to the latest release; --force also
+                                     replaces a from-source ("dev") build
   greybeard clean [--all]            forget all extracted relations (build
                                      re-creates them); --all also unregisters repos
   greybeard uninstall [--purge]      remove this binary; --purge also deletes
