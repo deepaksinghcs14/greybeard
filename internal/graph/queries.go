@@ -99,6 +99,9 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 			next = append(next, other)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err // a truncated hop must not read as "no more edges"
+		}
 		// Mark visited only after the whole hop so a repo found twice in the
 		// same hop still records all its edge types.
 		for _, n := range next {
@@ -191,7 +194,7 @@ func (s *Store) GetSchemaDependents(ctx context.Context, schema string) ([]Schem
 	for repo, ms := range modes {
 		mode := "read"
 		switch {
-		case ms["read"] && ms["write"]:
+		case ms["read_write"] || (ms["read"] && ms["write"]):
 			mode = "read_write"
 		case ms["write"]:
 			mode = "write"

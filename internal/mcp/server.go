@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -64,6 +67,12 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		path, err := req.RequireString("path")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+		// agents pass "~/code" literally; the shell isn't here to expand it
+		if strings.HasPrefix(path, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				path = filepath.Join(home, path[2:])
+			}
 		}
 		repos, err := discover.ScanRoot(path)
 		if err != nil {

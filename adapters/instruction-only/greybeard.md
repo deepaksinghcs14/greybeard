@@ -16,13 +16,13 @@ Claude Code normally only sees the repo it's working in. This skill fills that g
 
 Skip this for changes fully contained within one repo with no exported surface (internal-only functions, private types, test files).
 
-## You don't need to trigger indexing yourself
+## Keeping the graph fresh
 
-A session-start hook checks whether the current repo is registered and fresh before you're even asked to do anything, and queues extraction in the background if not. If a query comes back empty for a repo that was only just opened for the first time, that may mean extraction is still running rather than "no dependencies exist" — say so rather than asserting the repo has no cross-repo ties. See `references/graph-schema.md` for the discovery/freshness rules.
+This host has no session hooks, so indexing does not happen automatically here. If a query returns empty for a repo that plausibly has cross-repo ties, its extraction may be missing or stale — suggest running `greybeard build` (full rebuild) or `greybeard check --cwd <repo>` (fast freshness check) in a terminal rather than asserting the repo has no dependencies.
 
 ## How to query
 
-Call the MCP tool exposed by the graph server (see `references/mcp-tools.md` for exact signatures). The three core queries:
+Call the MCP tool exposed by the graph server (see the greybeard README (https://github.com/deepaksinghcs14/greybeard) for exact signatures). The three core queries:
 
 1. `get_related_repos(repo, max_hops)` — what repos are connected to this one, and how (import, API call, shared schema)
 2. `get_callers_of(endpoint_or_symbol)` — reverse lookup: what calls this specific thing

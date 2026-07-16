@@ -36,8 +36,13 @@ var httpMethods = map[string]bool{
 	"get": true, "post": true, "put": true, "patch": true, "delete": true, "head": true, "options": true,
 }
 
+// qualPrefix optionally matches a schema qualifier like `public.` or "app".
+const qualPrefix = `(?:["'` + "`" + `]?[A-Za-z_]\w*["'` + "`" + `]?\.)?`
+
 var (
-	createTableRe  = regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'` + "`" + `]?([A-Za-z_][\w]*)`)
+	// captures the TABLE name, not the schema qualifier: CREATE TABLE
+	// public.orders must record "orders", never "public".
+	createTableRe  = regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?` + qualPrefix + `["'` + "`" + `]?([A-Za-z_]\w*)`)
 	protoServiceRe = regexp.MustCompile(`^\s*service\s+(\w+)`)
 	protoRPCRe     = regexp.MustCompile(`^\s*rpc\s+(\w+)`)
 	protoMessageRe = regexp.MustCompile(`^\s*message\s+(\w+)`)
@@ -56,7 +61,9 @@ func Repo(root string) Extraction {
 				ex.Modules = append(ex.Modules, f.Module.Mod.Path)
 			}
 			for _, r := range f.Require {
-				ex.Deps = append(ex.Deps, r.Mod.Path)
+				if !r.Indirect { // transitive deps are not a direct imports edge
+					ex.Deps = append(ex.Deps, r.Mod.Path)
+				}
 			}
 		}
 	}
@@ -89,8 +96,9 @@ func Repo(root string) Extraction {
 		}
 	}
 
-	walkSources(root, func(path string) {
+	walkSources(root, maxDeclaredFileSize, func(path string) {
 		base := strings.ToLower(filepath.Base(path))
+		ext := filepath.Ext(base)
 		switch {
 		case strings.HasSuffix(base, ".proto"):
 			eps, msgs := parseProto(path)
@@ -106,8 +114,11 @@ func Repo(root string) Extraction {
 			}
 		// ponytail: OpenAPI specs found by filename convention (openapi*/swagger*),
 		// not by parsing every YAML in the tree; add content sniffing if specs
-		// under other names turn out to be common.
-		case strings.HasPrefix(base, "openapi") || strings.HasPrefix(base, "swagger"):
+		// under other names turn out to be common. Spec extensions only, and
+		// never swagger-ui assets — those are vendored JS, not specs.
+		case (strings.HasPrefix(base, "openapi") || strings.HasPrefix(base, "swagger")) &&
+			(ext == ".yaml" || ext == ".yml" || ext == ".json") &&
+			!strings.Contains(base, "-ui"):
 			eps, err := parseOpenAPI(path)
 			if err != nil {
 				ex.Errors = append(ex.Errors, filepath.Base(path)+": "+err.Error())
@@ -184,39 +195,43 @@ var manifestFiles = map[string]bool{
 	"package-lock.json": true, "yarn.lock": true, "pnpm-lock.yaml": true,
 }
 
-const maxScanFileSize = 512 * 1024
+const (
+	maxScanFileSize     = 512 * 1024      // cross-repo reference scanning
+	maxDeclaredFileSize = 8 * 1024 * 1024 // declared surface (generated specs get big)
+)
 
 // ScanRefs walks the repo's source files once and reports which needles occur.
 // Matching is contextual, not bare name matching — a table name in a comment
 // or an unrelated identifier must not become a graph edge:
 //   - paths (endpoints): substring match, but only on lines that contain a
 //     string-literal quote — code calls URLs in quoted strings, prose doesn't
-//   - tables: word match preceded by a SQL keyword (FROM/JOIN/INTO/UPDATE/
-//     CREATE TABLE/DELETE FROM)
+//   - tables: word match preceded by a SQL keyword; FROM/JOIN report "read",
+//     INSERT INTO/UPDATE/DELETE FROM/CREATE TABLE report "write", both
+//     report "read_write" (qualified names like public.orders match too)
 //   - messages (proto): word match in .proto files only, where sharing a
 //     message is an actual contract
 //
 // ponytail: still text-level, no per-language AST — treat hits as "worth
 // checking", not proof; that ceiling is documented in the README.
-func ScanRefs(root string, paths, tables, messages []string) (pathHits, tableHits, messageHits map[string]bool) {
+func ScanRefs(root string, paths, tables, messages []string) (pathHits map[string]bool, tableHits map[string]string, messageHits map[string]bool) {
 	pathHits = map[string]bool{}
-	tableHits = map[string]bool{}
+	tableHits = map[string]string{}
 	messageHits = map[string]bool{}
-	tableRes := make(map[string]*regexp.Regexp, len(tables))
+	nameRe := func(kw, t string) *regexp.Regexp {
+		return regexp.MustCompile(`(?i)\b(` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
+	}
+	readRes := make(map[string]*regexp.Regexp, len(tables))
+	writeRes := make(map[string]*regexp.Regexp, len(tables))
 	for _, t := range tables {
-		tableRes[t] = regexp.MustCompile(
-			`(?i)(from|join|into|update|delete\s+from|create\s+table(\s+if\s+not\s+exists)?)[\s"'` + "`" + `]+` +
-				regexp.QuoteMeta(t) + `\b`)
+		readRes[t] = nameRe(`from|join`, t)
+		writeRes[t] = nameRe(`insert\s+into|update|delete\s+from|merge\s+into|create\s+table(\s+if\s+not\s+exists)?`, t)
 	}
 	messageRes := make(map[string]*regexp.Regexp, len(messages))
 	for _, m := range messages {
 		messageRes[m] = regexp.MustCompile(`\b` + regexp.QuoteMeta(m) + `\b`)
 	}
-	done := func() bool {
-		return len(pathHits) == len(paths) && len(tableHits) == len(tables) && len(messageHits) == len(messages)
-	}
-	walkSources(root, func(path string) {
-		if manifestFiles[filepath.Base(path)] || done() {
+	walkSources(root, maxScanFileSize, func(path string) {
+		if manifestFiles[filepath.Base(path)] {
 			return
 		}
 		b, err := os.ReadFile(path)
@@ -234,9 +249,18 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits, tableHit
 				}
 			}
 		}
-		for t, re := range tableRes {
-			if !tableHits[t] && re.MatchString(s) {
-				tableHits[t] = true
+		for _, t := range tables {
+			if mode := tableHits[t]; mode != "read_write" {
+				read := strings.Contains(mode, "read") || readRes[t].MatchString(s)
+				write := strings.Contains(mode, "write") || writeRes[t].MatchString(s)
+				switch {
+				case read && write:
+					tableHits[t] = "read_write"
+				case write:
+					tableHits[t] = "write"
+				case read:
+					tableHits[t] = "read"
+				}
 			}
 		}
 		if isProto {
@@ -251,15 +275,19 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits, tableHit
 }
 
 // skipDirs are dependency/build trees that would be slow to walk and full of
-// third-party text that produces false cross-repo references.
+// third-party text that produces false cross-repo references. Hidden dirs
+// (.venv, .terraform, ...) are skipped by rule; these are the common unhidden
+// ones.
 var skipDirs = map[string]bool{
 	"node_modules": true, "vendor": true, "dist": true, "build": true,
 	"target": true, "out": true, "__pycache__": true, "coverage": true,
+	"venv": true, "env": true, "Pods": true, "third_party": true,
+	"bower_components": true,
 }
 
 // walkSources visits every scannable source file under root, skipping VCS,
-// hidden, and dependency/build directories, and oversized files.
-func walkSources(root string, visit func(path string)) {
+// hidden, and dependency/build directories, and files over maxSize bytes.
+func walkSources(root string, maxSize int64, visit func(path string)) {
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -277,7 +305,7 @@ func walkSources(root string, visit func(path string)) {
 		if !sourceExts[strings.ToLower(filepath.Ext(path))] {
 			return nil
 		}
-		if fi, err := d.Info(); err != nil || fi.Size() > maxScanFileSize {
+		if fi, err := d.Info(); err != nil || fi.Size() > maxSize {
 			return nil
 		}
 		visit(path)

@@ -105,17 +105,50 @@ func TestScanRefs(t *testing.T) {
 	if paths["/orders/{id}"] || paths["/nothing-here"] {
 		t.Errorf("unexpected path hits: %v", paths)
 	}
-	if !tables["orders"] {
-		t.Error("expected table hit for orders (FROM orders in a query)")
+	if tables["orders"] != "read" {
+		t.Errorf("orders should be a read (FROM orders), got %q", tables["orders"])
 	}
-	if tables["order"] {
+	if _, ok := tables["order"]; ok {
 		t.Error("table match must respect word boundaries")
 	}
-	if tables["order_items"] {
+	if _, ok := tables["order_items"]; ok {
 		t.Error("a table name in a comment (no SQL context) must not count as a reference")
 	}
-	if tables["customers"] {
+	if _, ok := tables["customers"]; ok {
 		t.Error("unexpected hit for customers")
+	}
+}
+
+func TestScanRefsQualifiedNamesAndWrites(t *testing.T) {
+	dir := t.TempDir()
+	src := "package x\n" +
+		"const q1 = `SELECT * FROM public.orders`\n" +
+		"const q2 = `INSERT INTO app.events (id) VALUES ($1)`\n" +
+		"const q3 = `UPDATE ledger SET total = 0`\n"
+	os.WriteFile(filepath.Join(dir, "db.go"), []byte(src), 0o644)
+	_, tables, _ := ScanRefs(dir, nil, []string{"orders", "events", "ledger"}, nil)
+	if tables["orders"] != "read" {
+		t.Errorf("qualified FROM public.orders should read, got %q", tables["orders"])
+	}
+	if tables["events"] != "write" {
+		t.Errorf("INSERT INTO app.events should write, got %q", tables["events"])
+	}
+	if tables["ledger"] != "write" {
+		t.Errorf("UPDATE ledger should write, got %q", tables["ledger"])
+	}
+}
+
+func TestCreateTableCapturesUnqualifiedName(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "migrations"), 0o755)
+	sql := "CREATE TABLE public.orders (id uuid);\nCREATE TABLE IF NOT EXISTS \"app\".invoices (id uuid);\n"
+	os.WriteFile(filepath.Join(dir, "migrations", "001.sql"), []byte(sql), 0o644)
+	ex := Repo(dir)
+	if !slices.Contains(ex.Tables, "orders") || !slices.Contains(ex.Tables, "invoices") {
+		t.Errorf("tables = %v, want orders and invoices (not schema qualifiers)", ex.Tables)
+	}
+	if slices.Contains(ex.Tables, "public") || slices.Contains(ex.Tables, "app") {
+		t.Errorf("schema qualifier captured as table: %v", ex.Tables)
 	}
 }
 

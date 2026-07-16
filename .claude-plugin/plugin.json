@@ -2,7 +2,7 @@
   "name": "greybeard",
   "version": "0.1.0",
   "description": "Local cross-repo graph so your agent knows what depends on what before it changes anything.",
-  "author": "deepaksinghcs14",
+  "author": { "name": "deepaksinghcs14" },
   "license": "MIT",
   "skills": ["./skills/greybeard"],
   "mcpServers": {

@@ -111,6 +111,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 		}
 		c := exec.Command(exe, "build", "--notify")
 		c.Stdout, c.Stderr = nil, nil
+		detach(c)
 		if err := c.Start(); err != nil {
 			return err
 		}
@@ -223,6 +224,7 @@ func cmdCheck(ctx context.Context, args []string) error {
 	}
 	c := exec.Command(exe, "reindex", "--cwd", repo.LocalPath)
 	c.Stdout, c.Stderr = nil, nil
+	detach(c)
 	_ = c.Start() // deliberately not Wait()ed — check returns immediately
 	return nil
 }

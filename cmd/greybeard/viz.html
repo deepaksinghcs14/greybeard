@@ -308,7 +308,11 @@ svg.addEventListener("wheel", (ev) => {
 }, { passive: false });
 
 measure();
-addEventListener("resize", () => { measure(); alpha = Math.max(alpha, 0.3); kick(); });
+addEventListener("resize", () => {
+  measure();
+  alpha = Math.max(alpha, 0.3);
+  reducedMotion ? (tickSettle(), render()) : kick();
+});
 
 for (const [i, n] of nodes.entries()) {
   const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI;
@@ -317,6 +321,9 @@ for (const [i, n] of nodes.entries()) {
 }
 
 // --- force layout ---------------------------------------------------------------
+// Declared before the first tick(): the reduced-motion settle below runs at
+// load, and tick() reads dragNode.
+let dragNode = null, downPos = null, dragMoved = false, panStart = null;
 // Repulsion scales with node count so a 30-repo graph spreads instead of balling up.
 const REPULSE = 9000 + 700 * nodes.length;
 let alpha = 1;
@@ -372,17 +379,27 @@ let selected = null;
 function edgePath(e) {
   const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
   const d = Math.sqrt(dx * dx + dy * dy) || 1;
-  const bend = (e.lane - (pairCount[e.pair] - 1) / 2) * 20;
+  // Sign the bend in canonical (sorted-pair) space: lanes are assigned per
+  // undirected pair, so an A→B and a B→A bundle must bow to opposite sides
+  // instead of collapsing onto the same arc.
+  const sign = e.from < e.to ? 1 : -1;
+  const bend = sign * (e.lane - (pairCount[e.pair] - 1) / 2) * 20;
   const mx = (e.a.x + e.b.x) / 2 - (dy / d) * bend;
   const my = (e.a.y + e.b.y) / 2 + (dx / d) * bend;
-  return `M ${e.a.x} ${e.a.y} Q ${mx} ${my} ${e.b.x} ${e.b.y}`;
+  // Trim both ends to the node rims so the direction arrowhead isn't drawn
+  // underneath the target circle.
+  const toward = (p, r) => {
+    const tx = mx - p.x, ty = my - p.y, td = Math.hypot(tx, ty) || 1;
+    return `${p.x + (tx / td) * r} ${p.y + (ty / td) * r}`;
+  };
+  return `M ${toward(e.a, e.a.r + 2)} Q ${mx} ${my} ${toward(e.b, e.b.r + 5)}`;
 }
 const typeVar = Object.fromEntries(EDGE_TYPES.map((t) => [t.key, t.varName]));
 
 function edgeTip(e) {
   const shown = e.details.slice(0, 4).map(esc).join("<br>");
   const more = e.details.length > 4 ? `<br>…and ${e.details.length - 4} more` : "";
-  return `<b>${esc(e.a.name)}</b> ${e.edge_type} → <b>${esc(e.b.name)}</b>` +
+  return `<b>${esc(e.a.name)}</b> ${esc(e.edge_type)} → <b>${esc(e.b.name)}</b>` +
     ` · ${e.details.length} link${e.details.length === 1 ? "" : "s"}<br>${shown}${more}`;
 }
 
@@ -464,7 +481,8 @@ function adjacent(a, b) {
 // Pointer capture eats click events, so selection is decided on pointerup: a
 // press that never moved more than 4px is a click; a moved press on a node
 // drags it (and pins it where it lands); a moved press on the background pans.
-let dragNode = null, downPos = null, dragMoved = false, panStart = null;
+// (dragNode & friends are declared up by the force layout — tick() needs them.)
+svg.addEventListener("pointerleave", hideTip); // per-element leave can be lost to re-renders
 svg.addEventListener("pointerdown", (ev) => {
   const g = ev.target.closest && ev.target.closest("g.node");
   dragNode = g ? g.__node : null;
@@ -523,7 +541,7 @@ function select(n) {
         const shown = e.details.slice(0, 6).map(esc).join(", ");
         const more = e.details.length > 6 ? `, +${e.details.length - 6} more` : "";
         return `<li><span class="dot" style="background:var(${typeVar[e.edge_type]})"></span>
-          <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${e.edge_type} (${e.details.length})
+          <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${esc(e.edge_type)} (${e.details.length})
           <span class="mono">${shown}${more}</span></span></li>`;
       }).join("");
     panelBody.innerHTML = `

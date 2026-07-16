@@ -50,12 +50,24 @@ for (const ref of fs.readdirSync(path.join(skillDir, 'references'))) {
 
 // --- Instruction-only adapter (Cursor, Windsurf, Cline, ...) -----------------
 // No skill/plugin system on these hosts: flatten to an always-on ruleset with
-// no frontmatter, and point the closing reference line at the README since the
-// references/ files don't ship with a pasted ruleset.
-const flattened = body.replace(
-  /^See `references\/mcp-tools\.md`.*$/m,
-  'See the greybeard README (https://github.com/deepaksinghcs14/greybeard) for full tool signatures and the node/edge model if you need to reason about what the graph does and doesn\'t capture.'
-);
+// no frontmatter. Every references/*.md pointer is redirected to the README
+// (those files don't ship with a pasted ruleset), and the session-start-hook
+// section is rewritten — these hosts have no hooks, so indexing is manual.
+const README = 'the greybeard README (https://github.com/deepaksinghcs14/greybeard)';
+const flattened = body
+  .replace(
+    /^See `references\/mcp-tools\.md`.*$/m,
+    `See ${README} for full tool signatures and the node/edge model if you need to reason about what the graph does and doesn't capture.`
+  )
+  .replace(/\(see `references\/mcp-tools\.md`[^)]*\)/g, `(see ${README} for exact signatures)`)
+  .replace(/See `references\/graph-schema\.md`[^.]*\./g, `See ${README} for the discovery/freshness rules.`)
+  .replace(
+    /## You don't need to trigger indexing yourself\n[\s\S]*?(?=\n## )/,
+    `## Keeping the graph fresh
+
+This host has no session hooks, so indexing does not happen automatically here. If a query returns empty for a repo that plausibly has cross-repo ties, its extraction may be missing or stale — suggest running \`greybeard build\` (full rebuild) or \`greybeard check --cwd <repo>\` (fast freshness check) in a terminal rather than asserting the repo has no dependencies.
+`
+  );
 const applyWhen = description.replace(/^Use this skill\s+/i, '');
 write(
   path.join('adapters', 'instruction-only', 'greybeard.md'),
