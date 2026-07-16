@@ -19,8 +19,7 @@ import (
 // tagged releases; "dev" means a from-source build (go install / go build).
 var version = "dev"
 
-const usage = `greybeard — he remembers what your repos forgot
-
+const usage = `
 Usage:
   greybeard init --root <path>       scan a tree for git repos and register them
   greybeard build [--background]     full extraction; --background detaches and

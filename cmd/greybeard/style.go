@@ -57,35 +57,7 @@ func edgeColor(t string) string {
 	return t
 }
 
-// banner is the old man himself. Shown on usage and version only.
+// banner: name + tagline, shown on usage and version.
 func banner() string {
-	art := []string{
-		`      .-"""""-.    `,
-		`     / .-. .-. \   `,
-		`    |  (o) (o)  |  `,
-		`    |     ^     |  `,
-		`     \  '==='  /   `,
-		`   .-'~~~~~~~~~'-. `,
-		`  /~~~~~~~~~~~~~~~\`,
-		` (~~~~~~~~~~~~~~~~~)`,
-		`  \~~~~~~~~~~~~~~~/`,
-		`   '~~~~~~~~~~~~~' `,
-	}
-	tag := []string{
-		"",
-		"",
-		"   greybeard " + version,
-		"   " + dim("he remembers what your repos forgot"),
-		"",
-		"",
-		"",
-		"",
-		"",
-		"",
-	}
-	var b strings.Builder
-	for i, line := range art {
-		b.WriteString(grey(line) + tag[i] + "\n")
-	}
-	return b.String()
+	return bold("greybeard "+version) + "\n" + dim("he remembers what your repos forgot") + "\n"
 }
