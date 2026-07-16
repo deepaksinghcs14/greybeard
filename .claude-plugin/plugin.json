@@ -6,7 +6,7 @@
   "license": "MIT",
   "skills": ["./skills/greybeard"],
   "mcpServers": {
-    "greybeard": { "command": "greybeard", "args": ["serve"] }
+    "greybeard": { "command": "${CLAUDE_PLUGIN_ROOT}/scripts/greybeard.sh", "args": ["serve"] }
   },
   "commands": [
     "./commands/greybeard-init.md",

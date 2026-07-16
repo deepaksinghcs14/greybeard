@@ -58,23 +58,7 @@ Inside Claude Code, the plugin adds `/greybeard-init`, `/greybeard-build`,
 
 ## Install
 
-**1. The binary** — that's the whole setup; storage is an embedded SQLite
-file greybeard creates itself. Grab a prebuilt binary from
-[Releases](https://github.com/deepaksinghcs14/greybeard/releases):
-
-```sh
-# macOS Apple Silicon (see Releases for darwin/linux/windows, amd64/arm64)
-sudo curl -L https://github.com/deepaksinghcs14/greybeard/releases/latest/download/greybeard_darwin_arm64 -o /usr/local/bin/greybeard
-sudo chmod +x /usr/local/bin/greybeard
-```
-
-or build from source if you have Go:
-
-```sh
-go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest
-```
-
-**2. Claude Code:**
+**Claude Code — the plugin is the whole setup** (macOS/Linux):
 
 ```
 /plugin marketplace add deepaksinghcs14/greybeard
@@ -83,23 +67,35 @@ go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest
 
 That wires up the skill, the slash commands, the MCP server, and a
 session-start hook that keeps the current repo's graph data fresh
-automatically.
+automatically. On first use the plugin bootstraps the `greybeard` binary
+itself — downloaded once from [Releases](https://github.com/deepaksinghcs14/greybeard/releases)
+into `~/.greybeard/bin`, sha256-verified against the release's
+`checksums.txt`. A binary already on PATH always wins, so `go install`
+users keep their own build:
 
-**3. Codex:** copy the generated skill into Codex's skills directory and
-register the MCP server:
+```sh
+go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest   # optional
+```
+
+(Windows: the bootstrap script needs a POSIX shell — install the binary
+from Releases manually.)
+
+**Codex:** copy the generated skill into Codex's skills directory and
+register the MCP server via the bundled launcher — same self-bootstrapping,
+no separate binary install:
 
 ```sh
 cp -r adapters/codex/greybeard ~/.agents/skills/greybeard
-codex mcp add greybeard -- greybeard serve
+codex mcp add greybeard -- ~/.agents/skills/greybeard/scripts/greybeard.sh serve
 ```
 
 (Older Codex builds read `~/.codex/skills/` instead.)
 
 **Cursor / Windsurf / Cline:** paste `adapters/instruction-only/greybeard.md`
-into your always-on rules, and register `greybeard serve` as a stdio MCP
-server however your editor does that.
+into your always-on rules, and register `greybeard serve` (or the launcher
+script) as a stdio MCP server however your editor does that.
 
-**4. First index:**
+**First index:**
 
 ```sh
 greybeard init --root ~/code
