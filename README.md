@@ -35,7 +35,13 @@ globally-breaking change, and you find out in production.
 | `greybeard init --root <path>` | Scan a tree for git repos and register every one found |
 | `greybeard build` | Full extraction across all registered repos (safe to rerun; not incremental) |
 | `greybeard serve` | MCP server over stdio — this is what your agent talks to |
+| `greybeard visualize` | Open the graph as an interactive local web page (`--port`, default 7333) |
+| `greybeard update` | Self-update to the latest GitHub release |
 | `greybeard check --cwd <path>` | Session-start freshness check: no-ops if the repo is registered and fresh, otherwise queues background extraction and returns immediately |
+
+`check` also self-updates the binary in the background at most once a day, so
+agent sessions keep greybeard current without anyone running `update` by hand
+(`GREYBEARD_AUTO_UPDATE=off` disables this).
 
 Inside Claude Code, the plugin adds `/greybeard-init`, `/greybeard-build`,
 `/greybeard-query`, and `/greybeard-audit` on top of these.

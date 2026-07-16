@@ -82,6 +82,9 @@ func Open(ctx context.Context) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One connection: SQLite allows a single writer anyway, and this keeps
+	// concurrent goroutines (parallel build) trivially safe in-process.
+	db.SetMaxOpenConns(1)
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cannot open graph store at %s: %w", path, err)

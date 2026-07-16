@@ -82,7 +82,7 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	s.AddTool(mcp.NewTool("build_graph",
 		mcp.WithDescription("Full rebuild: re-extract every registered repo and repopulate all nodes/edges. Safe to rerun; not incremental."),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return asJSON(st.BuildAll(ctx))
+		return asJSON(st.BuildAll(ctx, nil))
 	})
 
 	s.AddTool(mcp.NewTool("audit_graph",

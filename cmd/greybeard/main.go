@@ -3,11 +3,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/deepaksinghcs14/greybeard/internal/discover"
@@ -22,19 +22,22 @@ var version = "dev"
 const usage = `greybeard — he remembers what your repos forgot
 
 Usage:
-  greybeard init --root <path>   scan a tree for git repos and register them
-  greybeard build                full extraction across all registered repos
-  greybeard serve                MCP server over stdio
-  greybeard check --cwd <path>   session-start freshness check (used by hooks)
+  greybeard init --root <path>       scan a tree for git repos and register them
+  greybeard build                    full extraction across all registered repos
+  greybeard serve                    MCP server over stdio
+  greybeard visualize [--port 7333]  open the graph in your browser
+  greybeard update                   self-update to the latest release
+  greybeard check --cwd <path>       session-start freshness check (used by hooks)
 
 Configuration:
   GREYBEARD_DB           graph database file (default ~/.greybeard/graph.db)
   GREYBEARD_STALE_AFTER  reindex threshold for check, e.g. 24h (default)
+  GREYBEARD_AUTO_UPDATE  set to "off" to stop check from self-updating daily
 `
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, banner()+usage)
 		os.Exit(2)
 	}
 	ctx := context.Background()
@@ -46,15 +49,19 @@ func main() {
 		err = cmdBuild(ctx)
 	case "serve":
 		err = cmdServe(ctx)
+	case "visualize":
+		err = cmdVisualize(ctx, os.Args[2:])
+	case "update":
+		err = cmdUpdate(ctx, os.Args[2:])
 	case "check":
 		err = cmdCheck(ctx, os.Args[2:])
 	case "reindex":
 		// internal: spawned detached by `check` for background extraction
 		err = cmdReindex(ctx, os.Args[2:])
 	case "version", "--version":
-		fmt.Println("greybeard " + version)
+		fmt.Print(banner())
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, banner()+usage)
 		os.Exit(2)
 	}
 	if err != nil {
@@ -75,6 +82,7 @@ func cmdInit(ctx context.Context, args []string) error {
 		return err
 	}
 	defer st.Close()
+	fmt.Printf("%s scanning %s for repos…\n", grey("🧔"), bold(*root))
 	repos, err := discover.ScanRoot(*root)
 	if err != nil {
 		return err
@@ -83,9 +91,10 @@ func cmdInit(ctx context.Context, args []string) error {
 		if err := st.UpsertRepo(ctx, r); err != nil {
 			return err
 		}
-		fmt.Println("registered:", r.Name, "("+r.Identity+")")
+		fmt.Printf("  %s %s %s\n", green("✓"), bold(r.Name), dim(r.Identity))
 	}
-	fmt.Printf("%d repos registered under %s — run `greybeard build` for the first extraction\n", len(repos), *root)
+	fmt.Printf("\n%s repos registered — run %s for the first extraction\n",
+		bold(fmt.Sprint(len(repos))), bold("greybeard build"))
 	return nil
 }
 
@@ -95,12 +104,25 @@ func cmdBuild(ctx context.Context) error {
 		return err
 	}
 	defer st.Close()
-	res, err := st.BuildAll(ctx)
+	start := time.Now()
+	res, err := st.BuildAll(ctx, func(line string) {
+		if strings.HasPrefix(line, "✓") || strings.HasPrefix(line, "✗") {
+			fmt.Println("  " + glyph(line))
+		} else {
+			fmt.Println(grey("🧔 ") + line)
+		}
+	})
 	if err != nil {
 		return err
 	}
-	b, _ := json.MarshalIndent(res, "", "  ")
-	fmt.Println(string(b))
+	fmt.Printf("\n%s %s repos · %s nodes · %s edges %s\n",
+		grey("🧔 done."),
+		bold(fmt.Sprint(res.ReposProcessed)), bold(fmt.Sprint(res.Nodes)), bold(fmt.Sprint(res.Edges)),
+		dim("("+time.Since(start).Round(time.Millisecond).String()+")"))
+	if len(res.Failed) > 0 {
+		fmt.Printf("%s %d repos had extraction problems (listed above) — they're partially covered\n",
+			red("!"), len(res.Failed))
+	}
 	return nil
 }
 
@@ -123,6 +145,8 @@ func cmdCheck(ctx context.Context, args []string) error {
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
+
+	maybeAutoUpdate() // throttled to daily; detached and silent
 
 	repo, err := discover.RepoAt(*cwd)
 	if err != nil {

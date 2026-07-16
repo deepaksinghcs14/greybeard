@@ -63,7 +63,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	// --- build ---------------------------------------------------------------
-	res, err := st.BuildAll(ctx)
+	res, err := st.BuildAll(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
