@@ -1,0 +1,11 @@
+{
+  "name": "greybeard",
+  "owner": "deepaksinghcs14",
+  "plugins": [
+    {
+      "name": "greybeard",
+      "source": "./.claude-plugin/plugin.json",
+      "description": "He remembers what your repos forgot — local cross-repo dependency graph for AI coding agents."
+    }
+  ]
+}
