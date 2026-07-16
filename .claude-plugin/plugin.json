@@ -13,6 +13,5 @@
     "./commands/greybeard-build.md",
     "./commands/greybeard-query.md",
     "./commands/greybeard-audit.md"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
