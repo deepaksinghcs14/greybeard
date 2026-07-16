@@ -680,10 +680,11 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 	}
 	walkSources(root, maxScanFileSize, func(path string) {
 		base := filepath.Base(path)
-		// test code references tables/endpoints via fixtures and mocks, not
-		// real dependencies — it must not create edges (testdata/ dirs are
-		// skipped by the walk itself)
-		if manifestFiles[base] || strings.HasSuffix(base, "_test.go") {
+		// test code references tables/endpoints/symbols via fixtures and
+		// mocks, not real dependencies — it must not create edges (testdata/
+		// dirs are skipped by the walk itself). isTestSource covers every
+		// language ScanRefs scans, not just Go.
+		if manifestFiles[base] || isTestSource(path) {
 			return
 		}
 		b, err := os.ReadFile(path)

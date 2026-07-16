@@ -533,3 +533,20 @@ func TestScanRefsSkipsManifests(t *testing.T) {
 		t.Error("manifest content should not count as a reference")
 	}
 }
+
+func TestScanRefsSkipsNonGoTestFiles(t *testing.T) {
+	// _test.go was already excluded; this proves the same exclusion now
+	// covers other languages' test-file conventions too, not just Go.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "test_client.py"),
+		[]byte("# fixture mocking parse_config, not a real caller\ndef fake_mock():\n    parse_config()\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "client.test.js"),
+		[]byte("// mocks parse_config for the test suite\nfunction fakeMock() { parse_config(); }\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "ClientTest.java"),
+		[]byte("class ClientTest { void mock() { parse_config(); } }\n"), 0o644)
+
+	_, _, _, symHits := ScanRefs(dir, nil, nil, nil, []string{"parse_config"})
+	if symHits["parse_config"] {
+		t.Errorf("test-file references (Python/JS/Java) must not count: %v", symHits)
+	}
+}
