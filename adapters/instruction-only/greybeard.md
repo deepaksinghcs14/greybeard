@@ -32,10 +32,11 @@ Start with `max_hops=1` unless the task explicitly needs a wider blast-radius ch
 
 ## Interpreting results
 
-Results come back as structured edges (JSON). Before using them:
+Each query tool returns `{ results: [...], caveat?: "..." }`, not a bare array. Before using the results:
 
+- Check `caveat` first. It's only set when the graph itself has a gap that could explain an empty (or partial) result — the repo you queried was never extracted, is stale, or (for `get_callers_of`/`get_schema_dependents`, which aren't anchored on one repo) some registered repo overall hasn't been indexed. When `caveat` is set, an empty `results` means unknown, not confirmed absent — say that explicitly, don't report "no dependencies."
+- If `results` is empty and there's no `caveat`, that's a real signal the change is locally contained — say so explicitly rather than treating it as a query failure.
 - Distinguish edge types — `imports` (compile-time dependency) is a harder constraint than `calls_api` (runtime, can be versioned/deprecated gracefully) or `shares_schema` (data contract, breaking changes are silent until runtime).
-- If a query returns nothing, that's a real signal the change is locally contained — say so explicitly rather than treating empty results as a query failure.
 - Summarize findings in plain language before acting: "connector-platform calls this endpoint from `/outbound/execute`, and orchestrator-svc reads the `runs` table this schema backs" — not a raw JSON dump.
 
 ## Acting on findings

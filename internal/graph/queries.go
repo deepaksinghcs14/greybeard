@@ -262,6 +262,19 @@ func (s *Store) Audit(ctx context.Context, staleAfter time.Duration) (AuditResul
 	return res, nil
 }
 
+// StaleOrUnindexedCount reports how many registered repos have never been
+// extracted or are past the freshness threshold. Used to caveat query
+// results: an empty result set doesn't mean "confirmed no ties" if the
+// graph itself has gaps (README/FAQ: extraction gaps are "unknown," never
+// "no dependency").
+func (s *Store) StaleOrUnindexedCount(ctx context.Context, staleAfter time.Duration) (int, error) {
+	cutoff := time.Now().Add(-staleAfter).UTC().Format(time.RFC3339) // RFC3339 sorts lexicographically
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM repos WHERE last_indexed_at = '' OR last_indexed_at < ?`, cutoff).Scan(&n)
+	return n, err
+}
+
 func isHTTPMethod(s string) bool {
 	switch strings.ToUpper(s) {
 	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "GRPC":

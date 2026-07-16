@@ -2,25 +2,35 @@
 
 Assumes an MCP server (Go) backed by an embedded SQLite store.
 
+All three query tools return `{ results: T[], caveat?: string }`, not a bare
+array. **Check `caveat` before reading an empty `results` as "confirmed no
+ties."** It's only set when part of the graph this query touches hasn't
+been extracted yet or is stale — in that case empty means unknown, not
+absent (README/FAQ: extraction gaps are "unknown," never "no dependency").
+No `caveat` field at all (or empty) means the answer is trustworthy as-is.
+
 ## get_related_repos
 
 ```
-get_related_repos(repo: string, max_hops: int = 1) -> RepoRelation[]
+get_related_repos(repo: string, max_hops: int = 1) -> { results: RepoRelation[], caveat?: string }
 
 RepoRelation {
   repo:        string   // related repo name
-  edge_type:   string   // "imports" | "calls_api" | "shares_schema" | "depends_on"
+  edge_type:   string   // "imports" | "calls_api" | "shares_schema"
   detail:      string   // e.g. package path, endpoint, schema/table name
   hops:        int
   source:      string   // "scanned" (extraction) | "agent" (verified observation)
   evidence:    string   // agent edges only: the file:line/snippet cited at record_relation time
 }
+
+// caveat here checks the ONE repo you passed in: set if it has never been
+// extracted, or its extraction is stale.
 ```
 
 ## get_callers_of
 
 ```
-get_callers_of(target: string) -> Caller[]
+get_callers_of(target: string) -> { results: Caller[], caveat?: string }
 
 // target can be an endpoint ("POST /connectors/execute"), an exported
 // symbol, or a package path.
@@ -32,12 +42,15 @@ Caller {
   source:      string
   evidence:    string   // agent edges only
 }
+
+// caveat here is graph-wide (target isn't tied to one repo): set if ANY
+// registered repo is stale or was never extracted.
 ```
 
 ## get_schema_dependents
 
 ```
-get_schema_dependents(schema: string) -> SchemaDependent[]
+get_schema_dependents(schema: string) -> { results: SchemaDependent[], caveat?: string }
 
 SchemaDependent {
   repo:        string
@@ -46,6 +59,8 @@ SchemaDependent {
   source:      string   // if both a scanned and an agent edge exist for this repo, agent wins
   evidence:    string   // agent edges only
 }
+
+// caveat: same graph-wide check as get_callers_of.
 ```
 
 ## record_relation
