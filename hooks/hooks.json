@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "greybeard check --cwd \"$CLAUDE_PROJECT_DIR\"" }
+          { "type": "command", "command": "command -v greybeard >/dev/null 2>&1 && greybeard check --cwd \"$CLAUDE_PROJECT_DIR\" || true" }
         ]
       }
     ]

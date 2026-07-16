@@ -250,8 +250,15 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits, tableHit
 	return pathHits, tableHits, messageHits
 }
 
-// walkSources visits every scannable source file under root, skipping VCS and
-// dependency directories and oversized files.
+// skipDirs are dependency/build trees that would be slow to walk and full of
+// third-party text that produces false cross-repo references.
+var skipDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "dist": true, "build": true,
+	"target": true, "out": true, "__pycache__": true, "coverage": true,
+}
+
+// walkSources visits every scannable source file under root, skipping VCS,
+// hidden, and dependency/build directories, and oversized files.
 func walkSources(root string, visit func(path string)) {
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -259,7 +266,10 @@ func walkSources(root string, visit func(path string)) {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == "vendor" || name == "dist" {
+			// hidden dirs (.git, .venv, .terraform, .next, ...) and known
+			// dependency trees; the repo root itself is exempt from the
+			// hidden-dir rule so a checkout under a dotted path still scans
+			if (strings.HasPrefix(name, ".") && path != root) || skipDirs[name] {
 				return fs.SkipDir
 			}
 			return nil
