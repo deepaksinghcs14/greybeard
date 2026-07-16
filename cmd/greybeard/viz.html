@@ -1,0 +1,491 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>greybeard — graph</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:      #f9f9f7;
+    --surface:   #fcfcfb;
+    --ink:       #0b0b0b;
+    --ink-2:     #52514e;
+    --muted:     #898781;
+    --hairline:  #e1e0d9;
+    --border:    rgba(11,11,11,0.10);
+    --imports:   #2a78d6;
+    --calls:     #008300;
+    --schema:    #e87ba4;
+    --node:      #fcfcfb;
+    --node-ring: #52514e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:      #0d0d0d;
+      --surface:   #1a1a19;
+      --ink:       #ffffff;
+      --ink-2:     #c3c2b7;
+      --muted:     #898781;
+      --hairline:  #2c2c2a;
+      --border:    rgba(255,255,255,0.10);
+      --imports:   #3987e5;
+      --calls:     #008300;
+      --schema:    #d55181;
+      --node:      #1a1a19;
+      --node-ring: #c3c2b7;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:      #0d0d0d;
+    --surface:   #1a1a19;
+    --ink:       #ffffff;
+    --ink-2:     #c3c2b7;
+    --muted:     #898781;
+    --hairline:  #2c2c2a;
+    --border:    rgba(255,255,255,0.10);
+    --imports:   #3987e5;
+    --calls:     #008300;
+    --schema:    #d55181;
+    --node:      #1a1a19;
+    --node-ring: #c3c2b7;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page);
+    color: var(--ink);
+    overflow: hidden;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+  .wordmark { font-weight: 650; letter-spacing: 0.01em; font-size: 15px; }
+  .wordmark span { color: var(--muted); font-weight: 400; }
+  .stats { display: flex; gap: 14px; color: var(--ink-2); font-size: 12.5px; }
+  .stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; gap: 4px; margin-left: auto; }
+  .legend button {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid transparent;
+    background: none;
+    color: var(--ink-2);
+    font: 12.5px system-ui, sans-serif;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .legend button:hover { border-color: var(--hairline); }
+  .legend button:focus-visible { outline: 2px solid var(--imports); outline-offset: 1px; }
+  .legend button.off { opacity: 0.35; }
+  .legend button.off .swatch { background: var(--muted); }
+  .swatch { width: 18px; height: 3px; border-radius: 2px; }
+
+  main { position: relative; height: calc(100% - 45px); }
+  svg { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg.dragging { cursor: grabbing; }
+
+  .edge { fill: none; stroke-width: 2; opacity: 0.75; transition: opacity 0.15s; }
+  .edge.faded { opacity: 0.08; }
+  .node { cursor: pointer; }
+  .node circle {
+    fill: var(--node);
+    stroke: var(--node-ring);
+    stroke-width: 1.5;
+    transition: stroke-width 0.1s;
+  }
+  .node:hover circle, .node.selected circle { stroke-width: 3; stroke: var(--ink); }
+  .node.faded { opacity: 0.25; }
+  .node text {
+    font: 600 12px system-ui, sans-serif;
+    fill: var(--ink);
+    text-anchor: middle;
+    pointer-events: none;
+    paint-order: stroke;
+    stroke: var(--page);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
+  .node .stale-dot { fill: var(--muted); stroke: none; }
+
+  aside {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: min(360px, 90vw);
+    background: var(--surface);
+    border-left: 1px solid var(--hairline);
+    padding: 18px 20px;
+    overflow-y: auto;
+    display: none;
+  }
+  aside.open { display: block; }
+  aside h2 { margin: 0; font-size: 16px; }
+  aside .identity { color: var(--muted); font-size: 11.5px; word-break: break-all; margin: 3px 0 2px; }
+  aside .indexed { color: var(--ink-2); font-size: 12px; margin-bottom: 14px; }
+  aside .close {
+    position: absolute; top: 12px; right: 12px;
+    border: none; background: none; color: var(--muted);
+    font-size: 17px; cursor: pointer; padding: 4px 8px;
+  }
+  aside .close:hover { color: var(--ink); }
+  aside h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin: 16px 0 6px;
+    font-weight: 600;
+  }
+  aside ul { list-style: none; margin: 0; padding: 0; }
+  aside li {
+    font-size: 12px;
+    padding: 4px 0;
+    border-bottom: 1px solid var(--hairline);
+    color: var(--ink-2);
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  aside li:last-child { border-bottom: none; }
+  aside li .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; align-self: center; }
+  aside li b { color: var(--ink); font-weight: 600; }
+  .empty-note { color: var(--muted); font-size: 12px; }
+
+  .placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--ink-2);
+    text-align: center;
+    padding: 0 24px;
+  }
+  .placeholder .mono { color: var(--muted); }
+
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--ink-2);
+    display: none;
+    max-width: 320px;
+  }
+  .tooltip b { color: var(--ink); }
+</style>
+
+<header>
+  <div class="wordmark">greybeard <span>— cross-repo graph</span></div>
+  <div class="stats" id="stats"></div>
+  <nav class="legend" id="legend" aria-label="Toggle edge types"></nav>
+</header>
+<main>
+  <svg id="canvas" role="img" aria-label="Cross-repo dependency graph"></svg>
+  <aside id="panel" aria-live="polite">
+    <button class="close" id="panel-close" aria-label="Close details">✕</button>
+    <div id="panel-body"></div>
+  </aside>
+  <div class="tooltip" id="tooltip"></div>
+</main>
+
+<script>
+"use strict";
+const DATA = __GREYBEARD_DATA__;
+
+const EDGE_TYPES = [
+  { key: "imports",       label: "imports",       varName: "--imports", hint: "compile-time dependency" },
+  { key: "calls_api",     label: "calls_api",     varName: "--calls",   hint: "runtime HTTP/gRPC call" },
+  { key: "shares_schema", label: "shares_schema", varName: "--schema",  hint: "shared data contract" },
+];
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const svg = document.getElementById("canvas");
+const NS = "http://www.w3.org/2000/svg";
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// --- model -------------------------------------------------------------------
+const nodes = DATA.repos.map((r) => ({ ...r, x: 0, y: 0, vx: 0, vy: 0 }));
+const byId = new Map(nodes.map((n) => [n.identity, n]));
+const edges = DATA.edges
+  .filter((e) => byId.has(e.from) && byId.has(e.to) && e.from !== e.to)
+  .map((e) => ({ ...e, a: byId.get(e.from), b: byId.get(e.to) }));
+// arc offset for parallel edges between the same pair
+const pairCount = {};
+for (const e of edges) {
+  const k = [e.from, e.to].sort().join("|");
+  e.lane = (pairCount[k] = (pairCount[k] || 0) + 1) - 1;
+}
+for (const n of nodes) {
+  n.degree = edges.reduce((d, e) => d + (e.a === n || e.b === n), 0);
+  n.r = 10 + 4 * Math.sqrt(n.degree);
+}
+
+// --- header ------------------------------------------------------------------
+document.getElementById("stats").innerHTML =
+  `<span><b>${nodes.length}</b> repos</span><span><b>${edges.length}</b> edges</span>`;
+const hidden = new Set();
+const legend = document.getElementById("legend");
+for (const t of EDGE_TYPES) {
+  const btn = document.createElement("button");
+  btn.title = t.hint;
+  btn.innerHTML = `<span class="swatch" style="background:var(${t.varName})"></span>${t.label}`;
+  btn.onclick = () => {
+    hidden.has(t.key) ? hidden.delete(t.key) : hidden.add(t.key);
+    btn.classList.toggle("off", hidden.has(t.key));
+    render();
+  };
+  legend.appendChild(btn);
+}
+
+// --- empty state ---------------------------------------------------------------
+if (!nodes.length) {
+  const d = document.createElement("div");
+  d.className = "placeholder";
+  d.innerHTML = `<div style="font-size:15px;font-weight:600">The graph is empty</div>
+    <div>Register and extract your repos, then reload:</div>
+    <div class="mono">greybeard init --root ~/code && greybeard build</div>`;
+  document.querySelector("main").appendChild(d);
+}
+
+// --- force layout ---------------------------------------------------------------
+let W = 800, H = 600;
+function measure() {
+  W = svg.clientWidth; H = svg.clientHeight;
+}
+measure();
+addEventListener("resize", () => { measure(); alpha = Math.max(alpha, 0.3); kick(); });
+
+for (const [i, n] of nodes.entries()) {
+  const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI;
+  n.x = W / 2 + Math.cos(angle) * Math.min(W, H) * 0.28;
+  n.y = H / 2 + Math.sin(angle) * Math.min(W, H) * 0.28;
+}
+
+let alpha = 1;
+function tick() {
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy || 1;
+      const f = Math.min(12000 / d2, 8) * alpha;
+      const d = Math.sqrt(d2);
+      dx /= d; dy /= d;
+      a.vx -= dx * f; a.vy -= dy * f;
+      b.vx += dx * f; b.vy += dy * f;
+    }
+  }
+  for (const e of edges) {
+    let dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const want = 150 + e.a.r + e.b.r;
+    const f = ((d - want) / d) * 0.04 * alpha;
+    dx *= f; dy *= f;
+    e.a.vx += dx; e.a.vy += dy;
+    e.b.vx -= dx; e.b.vy -= dy;
+  }
+  for (const n of nodes) {
+    n.vx += (W / 2 - n.x) * 0.005 * alpha;
+    n.vy += (H / 2 - n.y) * 0.005 * alpha;
+    if (n !== dragNode) {
+      n.x += n.vx; n.y += n.vy;
+    }
+    n.vx *= 0.6; n.vy *= 0.6;
+    n.x = Math.max(n.r + 4, Math.min(W - n.r - 4, n.x));
+    n.y = Math.max(n.r + 4, Math.min(H - n.r - 4, n.y));
+  }
+  alpha *= 0.985;
+}
+
+let raf = null;
+function kick() {
+  if (raf || !nodes.length) return;
+  const loop = () => {
+    tick(); render();
+    raf = alpha > 0.005 ? requestAnimationFrame(loop) : null;
+  };
+  raf = requestAnimationFrame(loop);
+}
+if (reducedMotion) {
+  for (let i = 0; i < 300; i++) tick(); // settle instantly, no animation
+  alpha = 0;
+}
+
+// --- render ---------------------------------------------------------------------
+let selected = null;
+function edgePath(e) {
+  const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+  const d = Math.sqrt(dx * dx + dy * dy) || 1;
+  const bend = (e.lane - (pairCount[[e.from, e.to].sort().join("|")] - 1) / 2) * 26;
+  const mx = (e.a.x + e.b.x) / 2 - (dy / d) * bend;
+  const my = (e.a.y + e.b.y) / 2 + (dx / d) * bend;
+  return `M ${e.a.x} ${e.a.y} Q ${mx} ${my} ${e.b.x} ${e.b.y}`;
+}
+const typeVar = Object.fromEntries(EDGE_TYPES.map((t) => [t.key, t.varName]));
+
+function render() {
+  svg.innerHTML = "";
+  // arrowheads, one per edge type
+  const defs = document.createElementNS(NS, "defs");
+  for (const t of EDGE_TYPES) {
+    const m = document.createElementNS(NS, "marker");
+    m.setAttribute("id", "arrow-" + t.key);
+    m.setAttribute("viewBox", "0 0 10 10");
+    m.setAttribute("refX", "9"); m.setAttribute("refY", "5");
+    m.setAttribute("markerWidth", "5"); m.setAttribute("markerHeight", "5");
+    m.setAttribute("orient", "auto-start-reverse");
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    p.setAttribute("fill", css(t.varName));
+    m.appendChild(p);
+    defs.appendChild(m);
+  }
+  svg.appendChild(defs);
+
+  for (const e of edges) {
+    if (hidden.has(e.edge_type)) continue;
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("class", "edge" + (selected && e.a !== selected && e.b !== selected ? " faded" : ""));
+    path.setAttribute("d", edgePath(e));
+    path.setAttribute("stroke", css(typeVar[e.edge_type] || "--muted"));
+    path.setAttribute("marker-end", `url(#arrow-${e.edge_type})`);
+    path.addEventListener("pointermove", (ev) => showTip(ev, `<b>${e.a.name}</b> ${e.edge_type} → <b>${e.b.name}</b><br>${esc(e.detail)}`));
+    path.addEventListener("pointerleave", hideTip);
+    svg.appendChild(path);
+  }
+
+  for (const n of nodes) {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("class", "node" + (n === selected ? " selected" : "") +
+      (selected && n !== selected && !adjacent(n, selected) ? " faded" : ""));
+    g.setAttribute("transform", `translate(${n.x},${n.y})`);
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("r", n.r);
+    g.appendChild(c);
+    if (n.stale) {
+      const dot = document.createElementNS(NS, "circle");
+      dot.setAttribute("class", "stale-dot");
+      dot.setAttribute("r", "3");
+      dot.setAttribute("cx", n.r * 0.7);
+      dot.setAttribute("cy", -n.r * 0.7);
+      g.appendChild(dot);
+    }
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("y", n.r + 15);
+    t.textContent = n.name;
+    g.appendChild(t);
+    g.__node = n;
+    g.addEventListener("pointermove", (ev) => {
+      if (!dragNode) showTip(ev, `<b>${n.name}</b><br>${n.degree} connection${n.degree === 1 ? "" : "s"}${n.stale ? " · needs reindex" : ""}`);
+    });
+    g.addEventListener("pointerleave", hideTip);
+    svg.appendChild(g);
+  }
+}
+function adjacent(a, b) {
+  return edges.some((e) => !hidden.has(e.edge_type) &&
+    ((e.a === a && e.b === b) || (e.a === b && e.b === a)));
+}
+// --- drag vs click -----------------------------------------------------------
+// Pointer capture eats click events, so selection is decided on pointerup: a
+// press that never moved more than 4px is a click; anything further is a drag.
+let dragNode = null, downPos = null, dragMoved = false;
+svg.addEventListener("pointerdown", (ev) => {
+  const g = ev.target.closest && ev.target.closest("g.node");
+  dragNode = g ? g.__node : null;
+  downPos = [ev.clientX, ev.clientY];
+  dragMoved = false;
+  if (dragNode) {
+    svg.setPointerCapture(ev.pointerId);
+    hideTip();
+  }
+});
+svg.addEventListener("pointermove", (ev) => {
+  if (!dragNode || !downPos) return;
+  if (!dragMoved && Math.hypot(ev.clientX - downPos[0], ev.clientY - downPos[1]) < 4) return;
+  dragMoved = true;
+  svg.classList.add("dragging");
+  const r = svg.getBoundingClientRect();
+  dragNode.x = ev.clientX - r.left;
+  dragNode.y = ev.clientY - r.top;
+  alpha = Math.max(alpha, reducedMotion ? 0 : 0.25);
+  reducedMotion ? render() : kick();
+});
+svg.addEventListener("pointerup", () => {
+  if (!dragMoved) select(dragNode); // still press: select node, or clear on empty space
+  dragNode = null;
+  downPos = null;
+  svg.classList.remove("dragging");
+});
+
+// --- detail panel -----------------------------------------------------------------
+const panel = document.getElementById("panel");
+const panelBody = document.getElementById("panel-body");
+document.getElementById("panel-close").onclick = () => select(null);
+function select(n) {
+  selected = n;
+  panel.classList.toggle("open", !!n);
+  if (n) {
+    const owned = (title, items) => `<h3>${title}</h3>` + (items && items.length
+      ? `<ul>${items.map((i) => `<li class="mono">${esc(i)}</li>`).join("")}</ul>`
+      : `<div class="empty-note">none extracted</div>`);
+    const conns = edges
+      .filter((e) => e.a === n || e.b === n)
+      .map((e) => {
+        const out = e.a === n;
+        const other = out ? e.b.name : e.a.name;
+        return `<li><span class="dot" style="background:var(${typeVar[e.edge_type]})"></span>
+          <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${e.edge_type}
+          <span class="mono">${esc(e.detail)}</span></span></li>`;
+      }).join("");
+    panelBody.innerHTML = `
+      <h2>${esc(n.name)}</h2>
+      <div class="identity mono">${esc(n.identity)}</div>
+      <div class="indexed">${n.last_indexed_at ? "indexed " + esc(n.last_indexed_at) : "never indexed"}${n.stale ? " · stale" : ""}</div>
+      <h3>Connections</h3>
+      ${conns ? `<ul>${conns}</ul>` : `<div class="empty-note">no cross-repo edges — locally contained</div>`}
+      ${owned("Endpoints", n.endpoints)}
+      ${owned("Schemas", n.schemas)}
+      ${owned("Packages consumed by others", n.packages)}`;
+  }
+  render();
+}
+
+// --- tooltip ------------------------------------------------------------------------
+const tip = document.getElementById("tooltip");
+function showTip(ev, html) {
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const main = document.querySelector("main").getBoundingClientRect();
+  tip.style.left = Math.min(ev.clientX - main.left + 14, main.width - 340) + "px";
+  tip.style.top = (ev.clientY - main.top + 14) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+render();
+kick();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>

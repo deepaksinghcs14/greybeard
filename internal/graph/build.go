@@ -2,8 +2,11 @@ package graph
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/deepaksinghcs14/greybeard/internal/discover"
@@ -31,27 +34,57 @@ type declared struct {
 }
 
 // BuildAll re-extracts every registered repo and fully rebuilds all extracted
-// nodes and edges (repo registration survives).
-func (s *Store) BuildAll(ctx context.Context) (BuildResult, error) {
+// nodes and edges (repo registration survives). progress, if non-nil, receives
+// a human-readable line as each repo finishes a phase — plain text, ✓/✗
+// prefixed; the CLI adds color.
+func (s *Store) BuildAll(ctx context.Context, progress func(string)) (BuildResult, error) {
+	if progress == nil {
+		progress = func(string) {}
+	}
 	var res BuildResult
 	repos, err := s.ListRepos(ctx)
 	if err != nil {
 		return res, err
 	}
+	progress(fmt.Sprintf("extracting %d repos…", len(repos)))
 
 	// Extract everything first — cross-referencing needs all repos' surfaces.
-	var all []declared
+	// Extraction is a disk walk per repo, so run them in parallel; the wall
+	// clock of a build is dominated by these walks, not by SQLite.
+	var (
+		all []declared
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, runtime.NumCPU())
+	)
 	for _, r := range repos {
-		if _, err := os.Stat(r.LocalPath); err != nil {
-			res.Failed = append(res.Failed, RepoFailure{Repo: r.Name, Reason: "local path missing: " + r.LocalPath})
-			continue
-		}
-		ex := extract.Repo(r.LocalPath)
-		for _, e := range ex.Errors {
-			res.Failed = append(res.Failed, RepoFailure{Repo: r.Name, Reason: e})
-		}
-		all = append(all, declared{rec: r, ex: ex})
+		wg.Add(1)
+		go func(r RepoRecord) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if _, err := os.Stat(r.LocalPath); err != nil {
+				mu.Lock()
+				res.Failed = append(res.Failed, RepoFailure{Repo: r.Name, Reason: "local path missing: " + r.LocalPath})
+				mu.Unlock()
+				progress("✗ " + r.Name + " — local path missing: " + r.LocalPath)
+				return
+			}
+			start := time.Now()
+			ex := extract.Repo(r.LocalPath)
+			progress(fmt.Sprintf("✓ %s — %d endpoints · %d schemas · %d deps (%s)",
+				r.Name, len(ex.Endpoints), len(ex.Tables)+len(ex.Messages), len(ex.Deps),
+				time.Since(start).Round(time.Millisecond)))
+			mu.Lock()
+			for _, e := range ex.Errors {
+				res.Failed = append(res.Failed, RepoFailure{Repo: r.Name, Reason: e})
+				progress("✗ " + r.Name + " — " + e)
+			}
+			all = append(all, declared{rec: r, ex: ex})
+			mu.Unlock()
+		}(r)
 	}
+	wg.Wait()
 
 	// Full rebuild: drop all extracted rows.
 	for _, table := range []string{"endpoints", "schemas", "packages", "edges"} {
@@ -72,13 +105,35 @@ func (s *Store) BuildAll(ctx context.Context) (BuildResult, error) {
 			return res, err
 		}
 	}
+	// Cross-referencing re-walks each repo's sources (the other slow phase);
+	// same parallel fan-out. The single DB connection serializes the writes.
+	progress("cross-referencing…")
+	var firstErr error
 	for _, d := range all {
-		n, err := s.crossRef(ctx, d, others(all, d.rec.Identity))
-		if err != nil {
-			return res, err
-		}
-		res.Nodes += n.nodes
-		res.Edges += n.edges
+		wg.Add(1)
+		go func(d declared) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			start := time.Now()
+			n, err := s.crossRef(ctx, d, others(all, d.rec.Identity))
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && firstErr == nil {
+				firstErr = err
+				return
+			}
+			if n.edges > 0 {
+				progress(fmt.Sprintf("✓ %s — %d cross-repo edges (%s)",
+					d.rec.Name, n.edges, time.Since(start).Round(time.Millisecond)))
+			}
+			res.Nodes += n.nodes
+			res.Edges += n.edges
+		}(d)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return res, firstErr
 	}
 	res.ReposProcessed = len(all)
 	return res, nil

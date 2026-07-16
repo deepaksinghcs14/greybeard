@@ -123,7 +123,8 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 		method, path = strings.ToUpper(m), strings.TrimSpace(p)
 	}
 
-	q := `SELECT e.from_repo, e.detail FROM edges e WHERE e.edge_type = 'calls_api' AND e.path = ?`
+	q := `SELECT r.name, e.detail FROM edges e JOIN repos r ON r.identity = e.from_repo
+		WHERE e.edge_type = 'calls_api' AND e.path = ?`
 	args := []any{path}
 	if method != "" {
 		q += ` AND e.method = ?`
@@ -136,14 +137,16 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 
 	// imports: exact package match or a subpackage of the target.
 	err := s.collectCallers(ctx, &out, "imports",
-		`SELECT from_repo, detail FROM edges WHERE edge_type = 'imports'
-		 AND (detail = ?1 OR detail LIKE ?1 || '/%')`, target)
+		`SELECT r.name, e.detail FROM edges e JOIN repos r ON r.identity = e.from_repo
+		 WHERE e.edge_type = 'imports' AND (e.detail = ?1 OR e.detail LIKE ?1 || '/%')`, target)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
+// collectCallers must not run other queries while its rows are open — the
+// store holds a single SQLite connection, so a nested query deadlocks.
 func (s *Store) collectCallers(ctx context.Context, out *[]Caller, edgeType, query string, args ...any) error {
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -151,13 +154,9 @@ func (s *Store) collectCallers(ctx context.Context, out *[]Caller, edgeType, que
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var identity, detail string
-		if err := rows.Scan(&identity, &detail); err != nil {
+		var name, detail string
+		if err := rows.Scan(&name, &detail); err != nil {
 			return err
-		}
-		name := identity
-		if r, err := s.GetRepo(ctx, identity); err == nil && r != nil {
-			name = r.Name
 		}
 		*out = append(*out, Caller{Repo: name, EdgeType: edgeType, Detail: detail})
 	}
