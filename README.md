@@ -171,6 +171,21 @@ for remoteless repos), so the same repo cloned twice is one node, not two.
 Freshness is per-repo via `last_indexed_at`; the session-start hook re-queues
 extraction for anything older than `GREYBEARD_STALE_AFTER` (default `24h`).
 
+## Building locally
+
+```sh
+make install          # build + install to ~/go/bin
+make install-system   # also refresh /usr/local/bin (what Claude Code's hook/MCP resolve) — needs sudo
+make check            # everything CI runs: build, vet, tests, adapter freshness
+make adapters         # regenerate adapters/ after editing the canonical skill
+```
+
+After `make install-system`, rebuild the graph once so it reflects the
+current extraction rules: `greybeard clean && greybeard build`. macOS note:
+never `cp` over an existing binary in place — Apple Silicon kills it on
+launch with a stale code signature; the make targets do the safe
+remove-then-copy for you.
+
 ## Why embedded SQLite, not a graph database
 
 Because the graph is small and the queries are shallow. A few hundred repos
