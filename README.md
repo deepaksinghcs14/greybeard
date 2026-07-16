@@ -46,6 +46,7 @@ globally-breaking change, and you find out in production.
 | `greybeard serve` | MCP server over stdio — this is what your agent talks to |
 | `greybeard visualize` | Open the graph as an interactive local web page (`--port`, default 7333) |
 | `greybeard update` | Self-update to the latest GitHub release |
+| `greybeard clean` | Forget all extracted relations (`build` re-creates them); `--all` also unregisters every repo |
 | `greybeard check --cwd <path>` | Session-start freshness check: no-ops if the repo is registered and fresh, otherwise queues background extraction and returns immediately |
 
 `check` also self-updates the binary in the background at most once a day, so

@@ -178,4 +178,39 @@ func TestEndToEnd(t *testing.T) {
 	if len(callers) != 1 || callers[0].Repo != "billing-svc" {
 		t.Errorf("callers after reindex = %+v", callers)
 	}
+
+	// --- clean: relations gone, registrations kept, everything stale -------------
+	cres, err := st.Clean(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cres.EdgesRemoved == 0 || cres.ReposKept != 2 || cres.ReposRemoved != 0 {
+		t.Errorf("clean = %+v", cres)
+	}
+	callers, err = st.GetCallersOf(ctx, "POST /orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 0 {
+		t.Errorf("callers after clean should be empty: %+v", callers)
+	}
+	aud, err = st.Audit(ctx, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aud.TotalRepos != 2 || len(aud.EmptyRepos) != 2 || len(aud.StaleRepos) != 2 {
+		t.Errorf("audit after clean = %+v", aud)
+	}
+
+	// clean --all: full reset
+	if _, err := st.Clean(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := st.ListRepos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("repos after clean --all: %+v", remaining)
+	}
 }
