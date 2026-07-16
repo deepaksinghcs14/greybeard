@@ -319,10 +319,26 @@ func createDeclared(ctx context.Context, x dbtx, d declared) (counts, error) {
 
 // computeRefs scans repo d's sources against every other repo's declared
 // surface. Pure computation: no database access, safe to run in parallel.
+//
+// Precision rules (same name is NOT the same thing):
+//   - self-declaration wins: a name d declares itself resolves locally and
+//     never links to another repo's same-named table/endpoint/message
+//   - generic endpoints (/health, /metrics, ...) never link
+//   - generic table names (users, messages, ...) only link to repos d already
+//     imports or calls — corroboration, not coincidence
 func computeRefs(d declared, rest []declared) refPlan {
 	p := refPlan{from: d.rec.Identity}
 	if _, err := os.Stat(d.rec.LocalPath); err != nil {
 		return p // nothing to scan
+	}
+
+	selfNames := map[string]bool{}
+	for _, t := range append(append([]string{}, d.ex.Tables...), d.ex.Messages...) {
+		selfNames[t] = true
+	}
+	selfPaths := map[string]bool{}
+	for _, ep := range d.ex.Endpoints {
+		selfPaths[ep.Path] = true
 	}
 
 	type epOwner struct{ owner, method string }
@@ -331,12 +347,21 @@ func computeRefs(d declared, rest []declared) refPlan {
 	msgOwners := map[string][]string{}
 	for _, o := range rest {
 		for _, ep := range o.ex.Endpoints {
+			if selfPaths[ep.Path] || extract.GenericPath(ep.Path) {
+				continue
+			}
 			pathOwners[ep.Path] = append(pathOwners[ep.Path], epOwner{owner: o.rec.Identity, method: ep.Method})
 		}
 		for _, t := range o.ex.Tables {
+			if selfNames[t] {
+				continue
+			}
 			tableOwners[t] = append(tableOwners[t], o.rec.Identity)
 		}
 		for _, m := range o.ex.Messages {
+			if selfNames[m] {
+				continue
+			}
 			msgOwners[m] = append(msgOwners[m], o.rec.Identity)
 		}
 	}
@@ -369,8 +394,21 @@ func computeRefs(d declared, rest []declared) refPlan {
 			p.calls = append(p.calls, callRef{owner: eo.owner, method: eo.method, path: pa})
 		}
 	}
+
+	// corroborated owners: repos d already relates to via a harder edge
+	corroborated := map[string]bool{}
+	for _, im := range p.imports {
+		corroborated[im.owner] = true
+	}
+	for _, cl := range p.calls {
+		corroborated[cl.owner] = true
+	}
+
 	for t, mode := range tableHits {
 		for _, owner := range tableOwners[t] {
+			if extract.GenericTable(t) && !corroborated[owner] {
+				continue // "users" alone proves nothing about strangers
+			}
 			p.schemas = append(p.schemas, schemaRef{owner: owner, name: t, mode: mode})
 		}
 	}

@@ -180,6 +180,38 @@ func parseProto(path string) ([]Endpoint, []string) {
 	return eps, msgs
 }
 
+// genericTables are table names so common that a name collision means
+// nothing: two unrelated projects both having a "users" table is the norm,
+// not a shared schema. These only link repos that already have another
+// relationship (an imports or calls_api edge) to corroborate the claim.
+var genericTables = map[string]bool{
+	"users": true, "accounts": true, "sessions": true, "messages": true,
+	"events": true, "logs": true, "settings": true, "jobs": true, "tasks": true,
+	"notifications": true, "roles": true, "permissions": true, "tags": true,
+	"comments": true, "files": true, "tokens": true, "config": true,
+	"metadata": true, "items": true, "migrations": true, "schema_migrations": true,
+	"audit_log": true, "cache": true, "queue": true, "state": true,
+	"status": true, "history": true, "versions": true,
+}
+
+// GenericTable reports whether a table name is too common to link repos on
+// the name alone.
+func GenericTable(name string) bool { return genericTables[strings.ToLower(name)] }
+
+// genericPaths are endpoints every service declares; a match on them says
+// nothing about who calls whom.
+var genericPaths = map[string]bool{
+	"/health": true, "/healthz": true, "/status": true, "/metrics": true,
+	"/ready": true, "/readyz": true, "/live": true, "/livez": true,
+	"/ping": true, "/version": true, "/info": true, "/favicon.ico": true,
+}
+
+// GenericPath reports whether an endpoint path is too universal to link on.
+func GenericPath(p string) bool {
+	p = strings.ToLower(strings.TrimSuffix(p, "/"))
+	return p == "" || genericPaths[p]
+}
+
 // sourceExts are the file types scanned for cross-repo references.
 var sourceExts = map[string]bool{
 	".go": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true, ".py": true,
