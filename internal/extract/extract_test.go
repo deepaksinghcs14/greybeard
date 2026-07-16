@@ -311,6 +311,80 @@ func TestExtractMonorepoNestedManifests(t *testing.T) {
 	}
 }
 
+func TestExtractSymbolsGo(t *testing.T) {
+	dir := t.TempDir()
+	src := "package orders\n\n" +
+		"func CreateOrder() {}\n" +
+		"func lowerCaseHelper() {}\n" +
+		"type Order struct{}\n" +
+		"type internalState struct{}\n"
+	os.WriteFile(filepath.Join(dir, "orders.go"), []byte(src), 0o644)
+	ex := Repo(dir)
+	for _, want := range []string{"CreateOrder", "Order"} {
+		if !slices.Contains(ex.Symbols, want) {
+			t.Errorf("symbols missing %q: %v", want, ex.Symbols)
+		}
+	}
+	for _, notWant := range []string{"lowerCaseHelper", "internalState"} {
+		if slices.Contains(ex.Symbols, notWant) {
+			t.Errorf("unexported %q should not be a symbol: %v", notWant, ex.Symbols)
+		}
+	}
+}
+
+func TestExtractSymbolsPython(t *testing.T) {
+	dir := t.TempDir()
+	src := "def parse_config():\n    pass\n\n" +
+		"def _internal_helper():\n    pass\n\n" +
+		"class OrderProcessor:\n    pass\n"
+	os.WriteFile(filepath.Join(dir, "orders.py"), []byte(src), 0o644)
+	ex := Repo(dir)
+	for _, want := range []string{"parse_config", "OrderProcessor"} {
+		if !slices.Contains(ex.Symbols, want) {
+			t.Errorf("symbols missing %q: %v", want, ex.Symbols)
+		}
+	}
+	if slices.Contains(ex.Symbols, "_internal_helper") {
+		t.Errorf("leading-underscore (private convention) should not be a symbol: %v", ex.Symbols)
+	}
+}
+
+func TestExtractSymbolsJavaScript(t *testing.T) {
+	dir := t.TempDir()
+	src := "export function createOrder() {}\n" +
+		"export class OrderClient {}\n" +
+		"export const DEFAULT_TIMEOUT = 30;\n" +
+		"function localHelper() {}\n"
+	os.WriteFile(filepath.Join(dir, "orders.js"), []byte(src), 0o644)
+	ex := Repo(dir)
+	for _, want := range []string{"createOrder", "OrderClient", "DEFAULT_TIMEOUT"} {
+		if !slices.Contains(ex.Symbols, want) {
+			t.Errorf("symbols missing %q: %v", want, ex.Symbols)
+		}
+	}
+	if slices.Contains(ex.Symbols, "localHelper") {
+		t.Errorf("non-exported function should not be a symbol: %v", ex.Symbols)
+	}
+}
+
+func TestExtractSymbolsRust(t *testing.T) {
+	dir := t.TempDir()
+	src := "pub fn create_order() {}\n" +
+		"fn private_helper() {}\n" +
+		"pub struct Order {}\n" +
+		"pub enum OrderStatus {}\n"
+	os.WriteFile(filepath.Join(dir, "orders.rs"), []byte(src), 0o644)
+	ex := Repo(dir)
+	for _, want := range []string{"create_order", "Order", "OrderStatus"} {
+		if !slices.Contains(ex.Symbols, want) {
+			t.Errorf("symbols missing %q: %v", want, ex.Symbols)
+		}
+	}
+	if slices.Contains(ex.Symbols, "private_helper") {
+		t.Errorf("non-pub function should not be a symbol: %v", ex.Symbols)
+	}
+}
+
 func TestExtractProto(t *testing.T) {
 	dir := t.TempDir()
 	proto := `syntax = "proto3";
@@ -355,10 +429,10 @@ func TestExtractUnparseableManifestIsNonFatal(t *testing.T) {
 }
 
 func TestScanRefs(t *testing.T) {
-	paths, tables, _ := ScanRefs(billingFixture,
+	paths, tables, _, _ := ScanRefs(billingFixture,
 		[]string{"/orders", "/orders/{id}", "/nothing-here"},
 		[]string{"orders", "order", "order_items", "customers"},
-		nil)
+		nil, nil)
 	if !paths["/orders"] {
 		t.Error("expected path hit for /orders (quoted in client code)")
 	}
@@ -386,7 +460,7 @@ func TestScanRefsQualifiedNamesAndWrites(t *testing.T) {
 		"const q2 = `INSERT INTO app.events (id) VALUES ($1)`\n" +
 		"const q3 = `UPDATE ledger SET total = 0`\n"
 	os.WriteFile(filepath.Join(dir, "db.go"), []byte(src), 0o644)
-	_, tables, _ := ScanRefs(dir, nil, []string{"orders", "events", "ledger"}, nil)
+	_, tables, _, _ := ScanRefs(dir, nil, []string{"orders", "events", "ledger"}, nil, nil)
 	if tables["orders"] != "read" {
 		t.Errorf("qualified FROM public.orders should read, got %q", tables["orders"])
 	}
@@ -416,13 +490,13 @@ func TestScanRefsMessagesOnlyInProto(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "notes.go"),
 		[]byte("package x\n// handles Order objects\nvar Order int\n"), 0o644)
-	_, _, msgs := ScanRefs(dir, nil, nil, []string{"Order"})
+	_, _, msgs, _ := ScanRefs(dir, nil, nil, []string{"Order"}, nil)
 	if msgs["Order"] {
 		t.Error("message names outside .proto files must not count")
 	}
 	os.WriteFile(filepath.Join(dir, "shared.proto"),
 		[]byte("syntax = \"proto3\";\nmessage Order { string id = 1; }\n"), 0o644)
-	_, _, msgs = ScanRefs(dir, nil, nil, []string{"Order"})
+	_, _, msgs, _ = ScanRefs(dir, nil, nil, []string{"Order"}, nil)
 	if !msgs["Order"] {
 		t.Error("message name in a .proto file should count")
 	}
@@ -431,7 +505,7 @@ func TestScanRefsMessagesOnlyInProto(t *testing.T) {
 func TestScanRefsSkipsManifests(t *testing.T) {
 	// billing's go.mod contains "example.com/orders-svc", but manifests are
 	// excluded so a declared dep doesn't double as an API/schema reference.
-	paths, _, _ := ScanRefs(billingFixture, []string{"example.com/orders-svc"}, nil, nil)
+	paths, _, _, _ := ScanRefs(billingFixture, []string{"example.com/orders-svc"}, nil, nil, nil)
 	if paths["example.com/orders-svc"] {
 		t.Error("manifest content should not count as a reference")
 	}

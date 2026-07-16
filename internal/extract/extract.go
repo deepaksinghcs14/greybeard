@@ -29,6 +29,7 @@ type Extraction struct {
 	Endpoints []Endpoint
 	Tables    []string // tables created by SQL migrations
 	Messages  []string // proto message names
+	Symbols   []string // top-level exported function/type/class names
 	Notes     string   // llms.txt-style human-readable description, if present
 	Errors    []string // per-file parse failures (logged, never fatal)
 }
@@ -59,6 +60,74 @@ var (
 	// `group:`/`name:`/`version:` map form is rarer, add if it shows up.
 	gradleDepRe = regexp.MustCompile(`(?:implementation|api|compile|testImplementation|runtimeOnly|compileOnly)\s*\(?\s*["']([\w.-]+:[\w.-]+):[\w.+-]+["']`)
 )
+
+// symbolRes maps a source extension to the regexes that find top-level
+// exported declarations in it — one line-anchored pattern family per
+// language, same tradeoff as parseProto below: methods, nested/local
+// declarations, and non-idiomatic layouts are out of scope. Extraction is
+// text-level everywhere else in this file; this is no different.
+var symbolRes = map[string][]*regexp.Regexp{
+	".go": {
+		regexp.MustCompile(`(?m)^func\s+([A-Z]\w*)\s*\(`),
+		regexp.MustCompile(`(?m)^type\s+([A-Z]\w*)\s`),
+	},
+	".py": {
+		regexp.MustCompile(`(?m)^def\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`(?m)^class\s+([A-Za-z_]\w*)`),
+	},
+	".rb": {
+		regexp.MustCompile(`(?m)^\s*def\s+([a-z_]\w*[?!]?)`),
+		regexp.MustCompile(`(?m)^\s*class\s+([A-Z]\w*)`),
+		regexp.MustCompile(`(?m)^\s*module\s+([A-Z]\w*)`),
+	},
+	".java": {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".kt":   {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".cs":   {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".php": {
+		regexp.MustCompile(`(?m)^\s*function\s+(\w+)\s*\(`),
+		regexp.MustCompile(`(?m)^\s*class\s+(\w+)`),
+	},
+	".rs": {
+		regexp.MustCompile(`(?m)^pub\s+(?:async\s+)?fn\s+(\w+)`),
+		regexp.MustCompile(`(?m)^pub\s+struct\s+(\w+)`),
+		regexp.MustCompile(`(?m)^pub\s+enum\s+(\w+)`),
+	},
+}
+var jsExportRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^export\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)`),
+	regexp.MustCompile(`(?m)^export\s+(?:default\s+)?class\s+(\w+)`),
+	regexp.MustCompile(`(?m)^export\s+const\s+(\w+)`),
+}
+
+func init() {
+	for _, ext := range []string{".js", ".ts", ".jsx", ".tsx"} {
+		symbolRes[ext] = jsExportRes
+	}
+}
+
+// parseSymbols pulls top-level exported names out of a source file by
+// extension. Python/Ruby names starting with "_" (private by convention)
+// are dropped.
+func parseSymbols(path, ext string) []string {
+	res, ok := symbolRes[ext]
+	if !ok {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
+	var syms []string
+	for _, re := range res {
+		for _, m := range re.FindAllStringSubmatch(s, -1) {
+			if name := m[1]; !strings.HasPrefix(name, "_") {
+				syms = append(syms, name)
+			}
+		}
+	}
+	return syms
+}
 
 // pomXML is the subset of a Maven pom.xml this cares about.
 type pomXML struct {
@@ -138,6 +207,8 @@ func Repo(root string) Extraction {
 				return
 			}
 			ex.Endpoints = append(ex.Endpoints, eps...)
+		case symbolRes[ext] != nil:
+			ex.Symbols = append(ex.Symbols, parseSymbols(path, ext)...)
 		}
 	})
 
@@ -145,6 +216,7 @@ func Repo(root string) Extraction {
 	ex.Deps = dedupe(ex.Deps)
 	ex.Tables = dedupe(ex.Tables)
 	ex.Messages = dedupe(ex.Messages)
+	ex.Symbols = dedupe(ex.Symbols)
 	return ex
 }
 
@@ -481,6 +553,24 @@ var genericTables = map[string]bool{
 // the name alone.
 func GenericTable(name string) bool { return genericTables[strings.ToLower(name)] }
 
+// genericSymbols are exported names so common across codebases that a match
+// means nothing on its own — same corroboration rule as genericTables.
+var genericSymbols = map[string]bool{
+	"new": true, "init": true, "run": true, "start": true, "stop": true,
+	"close": true, "get": true, "set": true, "parse": true, "load": true,
+	"save": true, "open": true, "read": true, "write": true, "config": true,
+	"client": true, "server": true, "handler": true, "request": true,
+	"response": true, "error": true, "context": true, "options": true,
+	"result": true, "builder": true, "manager": true, "service": true,
+	"controller": true, "model": true, "base": true, "main": true, "test": true,
+	"helper": true, "util": true, "utils": true, "default": true, "create": true,
+	"delete": true, "update": true, "list": true, "validate": true, "process": true,
+}
+
+// GenericSymbol reports whether an exported name is too common to link
+// repos on the name alone.
+func GenericSymbol(name string) bool { return genericSymbols[strings.ToLower(name)] }
+
 // genericPaths are endpoints every service declares; a match on them says
 // nothing about who calls whom.
 var genericPaths = map[string]bool{
@@ -529,10 +619,11 @@ const (
 //
 // ponytail: still text-level, no per-language AST — treat hits as "worth
 // checking", not proof; that ceiling is documented in the README.
-func ScanRefs(root string, paths, tables, messages []string) (pathHits map[string]bool, tableHits map[string]string, messageHits map[string]bool) {
+func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits map[string]bool, tableHits map[string]string, messageHits map[string]bool, symbolHits map[string]bool) {
 	pathHits = map[string]bool{}
 	tableHits = map[string]string{}
 	messageHits = map[string]bool{}
+	symbolHits = map[string]bool{}
 	nameRe := func(kw, t string) *regexp.Regexp {
 		return regexp.MustCompile(`(?i)\b(` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
 	}
@@ -545,6 +636,13 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits map[strin
 	messageRes := make(map[string]*regexp.Regexp, len(messages))
 	for _, m := range messages {
 		messageRes[m] = regexp.MustCompile(`\b` + regexp.QuoteMeta(m) + `\b`)
+	}
+	// word-boundary only, no call-site requirement (unlike paths, which need
+	// a quote) — genericity + org corroboration in computeRefs carries the
+	// precision burden instead, same as table names.
+	symRes := make(map[string]*regexp.Regexp, len(symbols))
+	for _, sym := range symbols {
+		symRes[sym] = regexp.MustCompile(`\b` + regexp.QuoteMeta(sym) + `\b`)
 	}
 	walkSources(root, maxScanFileSize, func(path string) {
 		base := filepath.Base(path)
@@ -590,8 +688,13 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits map[strin
 				}
 			}
 		}
+		for sym, re := range symRes {
+			if !symbolHits[sym] && re.MatchString(s) {
+				symbolHits[sym] = true
+			}
+		}
 	})
-	return pathHits, tableHits, messageHits
+	return pathHits, tableHits, messageHits, symbolHits
 }
 
 // skipDirs are dependency/build trees that would be slow to walk and full of

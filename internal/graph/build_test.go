@@ -92,3 +92,67 @@ func TestComputeRefsPrecision(t *testing.T) {
 		t.Errorf("distinctive endpoint should link: %+v", p.calls)
 	}
 }
+
+// Symbol matching (calls_symbol) follows the exact same precision rules as
+// table matching: self-declaration wins, generic names need corroboration,
+// distinctive names may link on name alone but only within the same org.
+func TestComputeRefsSymbolPrecision(t *testing.T) {
+	dir := t.TempDir()
+	src := "package x\n" +
+		"var c1 = Config{}\n" + // self-declared symbol
+		"var c2 = Client{}\n" + // generic, owned by friend (corroborated via imports)
+		"var c3 = Handler{}\n" + // generic, owned by stranger (not corroborated)
+		"var c4 = ParseOrder()\n" + // distinctive, owned by stranger (not corroborated)
+		"var c5 = Widget{}\n" // distinctive, owned by sibling (same org) AND rival (cross-org)
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := declared{
+		rec: RepoRecord{Identity: "github.com/mine/me", Name: "me", LocalPath: dir},
+		ex: extract.Extraction{
+			Symbols: []string{"Config"}, // declares its own Config symbol
+			Deps:    []string{"example.com/friend"},
+		},
+	}
+	rest := []declared{
+		{rec: RepoRecord{Identity: "github.com/office/stranger"}, ex: extract.Extraction{
+			Symbols: []string{"Config", "Handler", "ParseOrder"},
+		}},
+		{rec: RepoRecord{Identity: "github.com/office/friend"}, ex: extract.Extraction{
+			Modules: []string{"example.com/friend"},
+			Symbols: []string{"Client"},
+		}},
+		{rec: RepoRecord{Identity: "github.com/mine/sibling"}, ex: extract.Extraction{
+			Symbols: []string{"Widget"}, // same org: name alone may link
+		}},
+		{rec: RepoRecord{Identity: "github.com/office/rival"}, ex: extract.Extraction{
+			Symbols: []string{"Widget"}, // cross-org, uncorroborated: must not link
+		}},
+	}
+
+	p := computeRefs(d, rest)
+
+	symTo := map[string]bool{} // owner|name
+	for _, sy := range p.symbols {
+		symTo[sy.owner+"|"+sy.name] = true
+	}
+	if symTo["github.com/office/stranger|Config"] {
+		t.Error("self-declared symbol must resolve locally, never to a stranger")
+	}
+	if symTo["github.com/office/stranger|Handler"] {
+		t.Error("generic symbol without corroboration must not link")
+	}
+	if symTo["github.com/office/stranger|ParseOrder"] {
+		t.Error("distinctive cross-org symbol without corroboration must not link")
+	}
+	if !symTo["github.com/office/friend|Client"] {
+		t.Errorf("generic symbol WITH an imports edge should link (corroborated): %+v", p.symbols)
+	}
+	if !symTo["github.com/mine/sibling|Widget"] {
+		t.Errorf("distinctive same-org symbol should link on name alone: %+v", p.symbols)
+	}
+	if symTo["github.com/office/rival|Widget"] {
+		t.Error("cross-org symbol without corroboration must not link")
+	}
+}

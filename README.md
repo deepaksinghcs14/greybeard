@@ -52,11 +52,12 @@ With greybeard:
 
 Every edge carries its type — `imports` (declared, hard fact) ›
 `calls_api` (matched in quoted strings) › `shares_schema` (matched in SQL
-context) — and its provenance (`scanned` vs `agent`), so the agent knows how
-hard each constraint is. Below the evidence bar nothing enters the graph:
-names a repo declares itself resolve locally, `/health` never links anything,
-and a `users` table only links repos that already share a harder edge. Same
-name is not same thing. Node/edge model:
+context) › `calls_symbol` (matched exported function/type/class name) — and
+its provenance (`scanned` vs `agent`), so the agent knows how hard each
+constraint is. Below the evidence bar nothing enters the graph: names a repo
+declares itself resolve locally, `/health` never links anything, and a
+`users` table (or a generic symbol like `Config`) only links repos that
+already share a harder edge. Same name is not same thing. Node/edge model:
 [graph-schema.md](skills/greybeard/references/graph-schema.md).
 
 A session-start hook keeps the current repo's data fresh (and the binary

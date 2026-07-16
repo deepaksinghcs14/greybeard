@@ -14,6 +14,7 @@
     --imports:   #2a78d6;
     --calls:     #008300;
     --schema:    #e87ba4;
+    --symbol:    #b8860b;
     --node:      #fcfcfb;
     --node-ring: #52514e;
   }
@@ -30,6 +31,7 @@
       --imports:   #3987e5;
       --calls:     #008300;
       --schema:    #d55181;
+      --symbol:    #d9a521;
       --node:      #1a1a19;
       --node-ring: #c3c2b7;
     }
@@ -46,6 +48,7 @@
     --imports:   #3987e5;
     --calls:     #008300;
     --schema:    #d55181;
+    --symbol:    #d9a521;
     --node:      #1a1a19;
     --node-ring: #c3c2b7;
   }
@@ -220,6 +223,7 @@ const EDGE_TYPES = [
   { key: "imports",       label: "imports",       varName: "--imports", hint: "compile-time dependency" },
   { key: "calls_api",     label: "calls_api",     varName: "--calls",   hint: "runtime HTTP/gRPC call" },
   { key: "shares_schema", label: "shares_schema", varName: "--schema",  hint: "shared data contract" },
+  { key: "calls_symbol",  label: "calls_symbol",  varName: "--symbol",  hint: "scanned reference to an exported symbol" },
 ];
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const svg = document.getElementById("canvas");
@@ -557,6 +561,7 @@ function select(n) {
       ${conns ? `<ul>${conns}</ul>` : `<div class="empty-note">no cross-repo edges — locally contained</div>`}
       ${owned("Endpoints", n.endpoints)}
       ${owned("Schemas", n.schemas)}
+      ${owned("Symbols", n.symbols)}
       ${owned("Packages consumed by others", n.packages)}`;
   }
   render();

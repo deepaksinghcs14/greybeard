@@ -13,9 +13,9 @@ import (
 // rebuilds preserve these edges instead of wiping them.
 func (s *Store) RecordRelation(ctx context.Context, from, to, edgeType, detail, accessMode, evidence string) error {
 	switch edgeType {
-	case "imports", "calls_api", "shares_schema":
+	case "imports", "calls_api", "shares_schema", "calls_symbol":
 	default:
-		return fmt.Errorf("edge_type must be imports, calls_api, or shares_schema (got %q)", edgeType)
+		return fmt.Errorf("edge_type must be imports, calls_api, shares_schema, or calls_symbol (got %q)", edgeType)
 	}
 	if strings.TrimSpace(evidence) == "" {
 		return fmt.Errorf("evidence is required — cite what you saw (file:line or a snippet)")
@@ -60,6 +60,15 @@ func (s *Store) RecordRelation(ctx context.Context, from, to, edgeType, detail, 
 		}
 		if _, err := s.db.ExecContext(ctx,
 			`INSERT OR IGNORE INTO schemas (repo, name) VALUES (?, ?)`,
+			toRec.Identity, detail); err != nil {
+			return err
+		}
+	}
+	if edgeType == "calls_symbol" {
+		// make the symbol queryable via get_callers_of even if the owner's
+		// declaration wasn't caught by the regex-based extractor
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO symbols (repo, name) VALUES (?, ?)`,
 			toRec.Identity, detail); err != nil {
 			return err
 		}

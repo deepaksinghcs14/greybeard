@@ -125,7 +125,8 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 }
 
 // GetCallersOf finds repos that call an endpoint ("POST /orders", "/orders",
-// "OrderService/Create") or import a package/symbol path.
+// "OrderService/Create"), import a package path, or reference an exported
+// symbol (function/type/class name).
 func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, error) {
 	method, path := "", strings.TrimSpace(target)
 	if m, p, ok := strings.Cut(path, " "); ok && isHTTPMethod(m) {
@@ -145,10 +146,16 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 	}
 
 	// imports: exact package match or a subpackage of the target.
-	err := s.collectCallers(ctx, &out, "imports",
+	if err := s.collectCallers(ctx, &out, "imports",
 		`SELECT r.name, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
-		 WHERE e.edge_type = 'imports' AND (e.detail = ?1 OR e.detail LIKE ?1 || '/%')`, target)
-	if err != nil {
+		 WHERE e.edge_type = 'imports' AND (e.detail = ?1 OR e.detail LIKE ?1 || '/%')`, target); err != nil {
+		return nil, err
+	}
+
+	// calls_symbol: exact match on an exported function/type/class name.
+	if err := s.collectCallers(ctx, &out, "calls_symbol",
+		`SELECT r.name, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
+		 WHERE e.edge_type = 'calls_symbol' AND e.detail = ?`, target); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -248,6 +255,7 @@ func (s *Store) Audit(ctx context.Context, staleAfter time.Duration) (AuditResul
 			(SELECT count(*) FROM endpoints WHERE repo = ?1) +
 			(SELECT count(*) FROM schemas   WHERE repo = ?1) +
 			(SELECT count(*) FROM packages  WHERE repo = ?1) +
+			(SELECT count(*) FROM symbols   WHERE repo = ?1) +
 			(SELECT count(*) FROM edges     WHERE from_repo = ?1)`, r.Identity).Scan(&total)
 		if err != nil {
 			return res, err

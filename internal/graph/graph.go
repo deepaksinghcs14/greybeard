@@ -47,9 +47,14 @@ CREATE TABLE IF NOT EXISTS packages (
 	import_path TEXT NOT NULL,
 	PRIMARY KEY (repo, import_path)
 );
+CREATE TABLE IF NOT EXISTS symbols (
+	repo TEXT NOT NULL, -- declaring repo identity
+	name TEXT NOT NULL, -- exported function/type/class name
+	PRIMARY KEY (repo, name)
+);
 CREATE TABLE IF NOT EXISTS edges (
 	from_repo   TEXT NOT NULL,
-	edge_type   TEXT NOT NULL, -- imports | calls_api | shares_schema
+	edge_type   TEXT NOT NULL, -- imports | calls_api | shares_schema | calls_symbol
 	to_repo     TEXT NOT NULL, -- identity of the target node's owner
 	detail      TEXT NOT NULL, -- import path / "METHOD path" / schema name
 	method      TEXT NOT NULL DEFAULT '', -- calls_api only

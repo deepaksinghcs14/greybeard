@@ -8,6 +8,7 @@
 | Endpoint  | path, method, repo                   | OpenAPI specs, proto files             |
 | Schema    | name, repo                           | migration files, proto messages        |
 | Package   | import_path, repo                    | go.mod, package.json, requirements.txt/pyproject.toml, Cargo.toml, composer.json, Gemfile/gemspec, pom.xml/build.gradle, .csproj |
+| Symbol    | name, repo                           | top-level exported function/type/class declarations (Go, Python, JS/TS, Ruby, Java/Kotlin, C#, PHP, Rust) |
 
 ## Edges
 
@@ -16,6 +17,7 @@
 | imports        | Repo -> Package     | compile-time dependency                    | manifest diff (go.mod, package.json, requirements.txt/pyproject.toml, Cargo.toml, composer.json, Gemfile/gemspec, pom.xml/build.gradle, .csproj) |
 | calls_api      | Repo -> Endpoint    | runtime HTTP/gRPC call                     | OpenAPI/proto cross-refs, code scan |
 | shares_schema  | Repo -> Schema      | reads or writes a shared data model        | migration/proto parsing          |
+| calls_symbol   | Repo -> Symbol      | references another repo's exported symbol  | word-boundary code scan, same corroboration rules as shares_schema |
 | depends_on     | Repo -> Repo        | rolled-up summary edge (any of the above)  | derived, recomputed each build   |
 
 ## Update mechanism
@@ -38,3 +40,4 @@ Repos enter the graph two ways:
 - Runtime call frequency or criticality (all edges are equally weighted)
 - Non-declared dependencies (e.g. an endpoint called via a hardcoded URL string in tooling scripts)
 - Anything not yet extracted for a given repo — treat gaps as "unknown," not "no dependency"
+- Symbols below the top level: methods on a type, nested/local declarations, and non-idiomatic layouts aren't matched — only top-level exported functions/types/classes are
