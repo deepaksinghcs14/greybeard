@@ -43,7 +43,16 @@ Inside Claude Code, the plugin adds `/greybeard-init`, `/greybeard-build`,
 ## Install
 
 **1. The binary** — that's the whole setup; storage is an embedded SQLite
-file greybeard creates itself:
+file greybeard creates itself. Grab a prebuilt binary from
+[Releases](https://github.com/deepaksinghcs14/greybeard/releases):
+
+```sh
+# macOS Apple Silicon (see Releases for darwin/linux/windows, amd64/arm64)
+curl -L https://github.com/deepaksinghcs14/greybeard/releases/latest/download/greybeard_darwin_arm64 -o /usr/local/bin/greybeard
+chmod +x /usr/local/bin/greybeard
+```
+
+or build from source if you have Go:
 
 ```sh
 go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest

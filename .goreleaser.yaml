@@ -1,0 +1,25 @@
+# Release config: cross-compiles greybeard for the common platforms and
+# attaches raw binaries (no archives — curl -o and go) plus checksums to the
+# GitHub Release. Triggered by .github/workflows/release.yml on v* tags.
+version: 2
+
+project_name: greybeard
+
+builds:
+  - main: ./cmd/greybeard
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - formats: [binary]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native

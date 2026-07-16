@@ -15,7 +15,9 @@ import (
 	"github.com/deepaksinghcs14/greybeard/internal/mcp"
 )
 
-const version = "0.1.0"
+// version is stamped by goreleaser via -ldflags "-X main.version=..." on
+// tagged releases; "dev" means a from-source build (go install / go build).
+var version = "dev"
 
 const usage = `greybeard — he remembers what your repos forgot
 
