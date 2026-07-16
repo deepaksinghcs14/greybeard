@@ -22,6 +22,8 @@ type VizEdge struct {
 	To       string `json:"to"`
 	EdgeType string `json:"edge_type"`
 	Detail   string `json:"detail"`
+	Source   string `json:"source"` // scanned | agent
+	Evidence string `json:"evidence,omitempty"`
 }
 
 type VizData struct {
@@ -77,14 +79,14 @@ func (s *Store) Snapshot(ctx context.Context) (VizData, error) {
 		data.Repos = append(data.Repos, vr)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail FROM depends_on`)
+	rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail, source, evidence FROM depends_on`)
 	if err != nil {
 		return data, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var e VizEdge
-		if err := rows.Scan(&e.From, &e.To, &e.EdgeType, &e.Detail); err != nil {
+		if err := rows.Scan(&e.From, &e.To, &e.EdgeType, &e.Detail, &e.Source, &e.Evidence); err != nil {
 			return data, err
 		}
 		data.Edges = append(data.Edges, e)

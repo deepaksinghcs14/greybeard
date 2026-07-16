@@ -195,6 +195,45 @@ func TestEndToEnd(t *testing.T) {
 	if len(callers) != 1 || callers[0].Source != "agent" {
 		t.Errorf("agent edge = %+v, want source=agent", callers)
 	}
+	if callers[0].Evidence != "billing/cancel.go:42 — url built from cfg.OrdersBase" {
+		t.Errorf("agent edge evidence = %q, want the recorded citation", callers[0].Evidence)
+	}
+
+	// evidence must also surface through get_related_repos and the
+	// visualize snapshot, not just get_callers_of — record_relation's
+	// evidence was write-only until this was fixed.
+	rels, err = st.GetRelatedRepos(ctx, "billing-svc", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEvidence := false
+	for _, r := range rels {
+		if r.EdgeType == "calls_api" && r.Detail == "DELETE /orders/{id}" {
+			if r.Evidence == "" {
+				t.Errorf("get_related_repos dropped evidence for %+v", r)
+			}
+			foundEvidence = true
+		}
+	}
+	if !foundEvidence {
+		t.Fatal("expected the agent-recorded edge in get_related_repos")
+	}
+	snap, err := st.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEvidence = false
+	for _, e := range snap.Edges {
+		if e.EdgeType == "calls_api" && e.Detail == "DELETE /orders/{id}" {
+			if e.Source != "agent" || e.Evidence == "" {
+				t.Errorf("visualize snapshot dropped source/evidence for %+v", e)
+			}
+			foundEvidence = true
+		}
+	}
+	if !foundEvidence {
+		t.Fatal("expected the agent-recorded edge in the visualize snapshot")
+	}
 	if _, err := st.BuildAll(ctx, nil); err != nil {
 		t.Fatal(err)
 	}

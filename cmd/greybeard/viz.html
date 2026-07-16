@@ -193,6 +193,8 @@
     max-width: 320px;
   }
   .tooltip b { color: var(--ink); }
+  .tooltip .ev { color: var(--muted); font-style: italic; }
+  .agent-badge { color: var(--ink); }
 </style>
 
 <header>
@@ -239,7 +241,7 @@ for (const e of rawEdges) {
     bundles.set(key, { from: e.from, to: e.to, edge_type: e.edge_type,
       a: byId.get(e.from), b: byId.get(e.to), details: [] });
   }
-  bundles.get(key).details.push(e.detail);
+  bundles.get(key).details.push({ text: e.detail, source: e.source, evidence: e.evidence });
 }
 const edges = [...bundles.values()];
 // lane offset for the (at most 6) bundles between the same repo pair
@@ -397,7 +399,10 @@ function edgePath(e) {
 const typeVar = Object.fromEntries(EDGE_TYPES.map((t) => [t.key, t.varName]));
 
 function edgeTip(e) {
-  const shown = e.details.slice(0, 4).map(esc).join("<br>");
+  const shown = e.details.slice(0, 4).map((d) => {
+    const line = esc(d.text) + (d.source === "agent" ? ` <span class="agent-badge" title="agent-verified">✓</span>` : "");
+    return d.evidence ? `${line}<br><span class="ev">${esc(d.evidence)}</span>` : line;
+  }).join("<br>");
   const more = e.details.length > 4 ? `<br>…and ${e.details.length - 4} more` : "";
   return `<b>${esc(e.a.name)}</b> ${esc(e.edge_type)} → <b>${esc(e.b.name)}</b>` +
     ` · ${e.details.length} link${e.details.length === 1 ? "" : "s"}<br>${shown}${more}`;
@@ -538,7 +543,7 @@ function select(n) {
       .map((e) => {
         const out = e.a === n;
         const other = out ? e.b.name : e.a.name;
-        const shown = e.details.slice(0, 6).map(esc).join(", ");
+        const shown = e.details.slice(0, 6).map((d) => esc(d.text)).join(", ");
         const more = e.details.length > 6 ? `, +${e.details.length - 6} more` : "";
         return `<li><span class="dot" style="background:var(${typeVar[e.edge_type]})"></span>
           <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${esc(e.edge_type)} (${e.details.length})

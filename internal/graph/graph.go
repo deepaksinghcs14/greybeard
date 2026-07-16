@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS edges (
 -- Recreated (not IF NOT EXISTS) so column additions reach existing stores.
 DROP VIEW IF EXISTS depends_on;
 CREATE VIEW depends_on AS
-	SELECT DISTINCT from_repo, to_repo, edge_type, detail, source FROM edges WHERE from_repo <> to_repo;
+	SELECT DISTINCT from_repo, to_repo, edge_type, detail, source, evidence FROM edges WHERE from_repo <> to_repo;
 `
 
 // migrations are idempotent column additions for stores created before the

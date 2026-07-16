@@ -12,6 +12,8 @@ RepoRelation {
   edge_type:   string   // "imports" | "calls_api" | "shares_schema" | "depends_on"
   detail:      string   // e.g. package path, endpoint, schema/table name
   hops:        int
+  source:      string   // "scanned" (extraction) | "agent" (verified observation)
+  evidence:    string   // agent edges only: the file:line/snippet cited at record_relation time
 }
 ```
 
@@ -27,6 +29,8 @@ Caller {
   repo:        string
   edge_type:   string
   detail:      string
+  source:      string
+  evidence:    string   // agent edges only
 }
 ```
 
@@ -39,6 +43,8 @@ SchemaDependent {
   repo:        string
   access_mode: string   // "read" | "write" | "read_write"
   table_or_type: string
+  source:      string   // if both a scanned and an agent edge exist for this repo, agent wins
+  evidence:    string   // agent edges only
 }
 ```
 
