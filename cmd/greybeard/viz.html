@@ -73,6 +73,7 @@
   .wordmark span { color: var(--muted); font-weight: 400; }
   .stats { display: flex; gap: 14px; color: var(--ink-2); font-size: 12.5px; }
   .stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .hint { color: var(--muted); font-size: 11.5px; }
 
   .legend { display: flex; gap: 4px; margin-left: auto; }
   .legend button {
@@ -94,22 +95,23 @@
   .swatch { width: 18px; height: 3px; border-radius: 2px; }
 
   main { position: relative; height: calc(100% - 45px); }
-  svg { width: 100%; height: 100%; display: block; cursor: grab; }
+  svg { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   svg.dragging { cursor: grabbing; }
 
-  .edge { fill: none; stroke-width: 2; opacity: 0.75; transition: opacity 0.15s; }
-  .edge.faded { opacity: 0.08; }
+  .edge { fill: none; opacity: 0.6; transition: opacity 0.15s; }
+  .edge.faded { opacity: 0.06; }
   .node { cursor: pointer; }
-  .node circle {
+  .node circle.body {
     fill: var(--node);
     stroke: var(--node-ring);
     stroke-width: 1.5;
     transition: stroke-width 0.1s;
   }
-  .node:hover circle, .node.selected circle { stroke-width: 3; stroke: var(--ink); }
+  .node:hover circle.body, .node.selected circle.body { stroke-width: 3; stroke: var(--ink); }
+  .node.pinned circle.body { stroke-dasharray: 4 3; }
   .node.faded { opacity: 0.25; }
   .node text {
-    font: 600 12px system-ui, sans-serif;
+    font: 600 11.5px system-ui, sans-serif;
     fill: var(--ink);
     text-anchor: middle;
     pointer-events: none;
@@ -196,6 +198,7 @@
 <header>
   <div class="wordmark">greybeard <span>— cross-repo graph</span></div>
   <div class="stats" id="stats"></div>
+  <div class="hint">scroll to zoom · drag background to pan · drop a node to pin it · double-click to unpin</div>
   <nav class="legend" id="legend" aria-label="Toggle edge types"></nav>
 </header>
 <main>
@@ -222,25 +225,39 @@ const NS = "http://www.w3.org/2000/svg";
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // --- model -------------------------------------------------------------------
-const nodes = DATA.repos.map((r) => ({ ...r, x: 0, y: 0, vx: 0, vy: 0 }));
+const nodes = DATA.repos.map((r) => ({ ...r, x: 0, y: 0, vx: 0, vy: 0, pinned: false }));
 const byId = new Map(nodes.map((n) => [n.identity, n]));
-const edges = DATA.edges
-  .filter((e) => byId.has(e.from) && byId.has(e.to) && e.from !== e.to)
-  .map((e) => ({ ...e, a: byId.get(e.from), b: byId.get(e.to) }));
-// arc offset for parallel edges between the same pair
+
+// Bundle parallel edges: one rendered line per (from, to, edge_type) carrying
+// all its underlying links — 700 raw links between a handful of repos must
+// not become 700 arcs.
+const rawEdges = DATA.edges.filter((e) => byId.has(e.from) && byId.has(e.to) && e.from !== e.to);
+const bundles = new Map();
+for (const e of rawEdges) {
+  const key = e.from + "|" + e.to + "|" + e.edge_type;
+  if (!bundles.has(key)) {
+    bundles.set(key, { from: e.from, to: e.to, edge_type: e.edge_type,
+      a: byId.get(e.from), b: byId.get(e.to), details: [] });
+  }
+  bundles.get(key).details.push(e.detail);
+}
+const edges = [...bundles.values()];
+// lane offset for the (at most 6) bundles between the same repo pair
 const pairCount = {};
 for (const e of edges) {
   const k = [e.from, e.to].sort().join("|");
+  e.pair = k;
   e.lane = (pairCount[k] = (pairCount[k] || 0) + 1) - 1;
 }
 for (const n of nodes) {
   n.degree = edges.reduce((d, e) => d + (e.a === n || e.b === n), 0);
-  n.r = 10 + 4 * Math.sqrt(n.degree);
+  n.links = rawEdges.reduce((d, e) => d + (e.from === n.identity || e.to === n.identity), 0);
+  n.r = 9 + 3 * Math.sqrt(Math.min(n.degree, 36)); // capped: hubs stay readable
 }
 
 // --- header ------------------------------------------------------------------
 document.getElementById("stats").innerHTML =
-  `<span><b>${nodes.length}</b> repos</span><span><b>${edges.length}</b> edges</span>`;
+  `<span><b>${nodes.length}</b> repos</span><span><b>${rawEdges.length}</b> links</span>`;
 const hidden = new Set();
 const legend = document.getElementById("legend");
 for (const t of EDGE_TYPES) {
@@ -265,20 +282,43 @@ if (!nodes.length) {
   document.querySelector("main").appendChild(d);
 }
 
-// --- force layout ---------------------------------------------------------------
+// --- view (zoom / pan) ---------------------------------------------------------
 let W = 800, H = 600;
+const view = { x: 0, y: 0, k: 1 };
 function measure() {
   W = svg.clientWidth; H = svg.clientHeight;
+  applyView();
 }
+function applyView() {
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${W / view.k} ${H / view.k}`);
+}
+// client coords -> graph coords under the current view
+function toGraph(ev) {
+  const r = svg.getBoundingClientRect();
+  return [view.x + (ev.clientX - r.left) / view.k, view.y + (ev.clientY - r.top) / view.k];
+}
+svg.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const [gx, gy] = toGraph(ev);
+  const k = Math.min(6, Math.max(0.3, view.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
+  view.x = gx - (gx - view.x) * (view.k / k);
+  view.y = gy - (gy - view.y) * (view.k / k);
+  view.k = k;
+  applyView();
+}, { passive: false });
+
 measure();
 addEventListener("resize", () => { measure(); alpha = Math.max(alpha, 0.3); kick(); });
 
 for (const [i, n] of nodes.entries()) {
   const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI;
-  n.x = W / 2 + Math.cos(angle) * Math.min(W, H) * 0.28;
-  n.y = H / 2 + Math.sin(angle) * Math.min(W, H) * 0.28;
+  n.x = W / 2 + Math.cos(angle) * Math.min(W, H) * 0.32;
+  n.y = H / 2 + Math.sin(angle) * Math.min(W, H) * 0.32;
 }
 
+// --- force layout ---------------------------------------------------------------
+// Repulsion scales with node count so a 30-repo graph spreads instead of balling up.
+const REPULSE = 9000 + 700 * nodes.length;
 let alpha = 1;
 function tick() {
   for (let i = 0; i < nodes.length; i++) {
@@ -286,7 +326,7 @@ function tick() {
       const a = nodes[i], b = nodes[j];
       let dx = b.x - a.x, dy = b.y - a.y;
       let d2 = dx * dx + dy * dy || 1;
-      const f = Math.min(12000 / d2, 8) * alpha;
+      const f = Math.min(REPULSE / d2, 10) * alpha;
       const d = Math.sqrt(d2);
       dx /= d; dy /= d;
       a.vx -= dx * f; a.vy -= dy * f;
@@ -296,21 +336,19 @@ function tick() {
   for (const e of edges) {
     let dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
     const d = Math.sqrt(dx * dx + dy * dy) || 1;
-    const want = 150 + e.a.r + e.b.r;
-    const f = ((d - want) / d) * 0.04 * alpha;
+    const want = 170 + e.a.r + e.b.r;
+    const f = ((d - want) / d) * 0.03 * alpha;
     dx *= f; dy *= f;
     e.a.vx += dx; e.a.vy += dy;
     e.b.vx -= dx; e.b.vy -= dy;
   }
   for (const n of nodes) {
-    n.vx += (W / 2 - n.x) * 0.005 * alpha;
-    n.vy += (H / 2 - n.y) * 0.005 * alpha;
-    if (n !== dragNode) {
+    n.vx += (W / 2 - n.x) * 0.004 * alpha;
+    n.vy += (H / 2 - n.y) * 0.004 * alpha;
+    if (n !== dragNode && !n.pinned) {
       n.x += n.vx; n.y += n.vy;
     }
     n.vx *= 0.6; n.vy *= 0.6;
-    n.x = Math.max(n.r + 4, Math.min(W - n.r - 4, n.x));
-    n.y = Math.max(n.r + 4, Math.min(H - n.r - 4, n.y));
   }
   alpha *= 0.985;
 }
@@ -334,16 +372,22 @@ let selected = null;
 function edgePath(e) {
   const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
   const d = Math.sqrt(dx * dx + dy * dy) || 1;
-  const bend = (e.lane - (pairCount[[e.from, e.to].sort().join("|")] - 1) / 2) * 26;
+  const bend = (e.lane - (pairCount[e.pair] - 1) / 2) * 20;
   const mx = (e.a.x + e.b.x) / 2 - (dy / d) * bend;
   const my = (e.a.y + e.b.y) / 2 + (dx / d) * bend;
   return `M ${e.a.x} ${e.a.y} Q ${mx} ${my} ${e.b.x} ${e.b.y}`;
 }
 const typeVar = Object.fromEntries(EDGE_TYPES.map((t) => [t.key, t.varName]));
 
+function edgeTip(e) {
+  const shown = e.details.slice(0, 4).map(esc).join("<br>");
+  const more = e.details.length > 4 ? `<br>…and ${e.details.length - 4} more` : "";
+  return `<b>${esc(e.a.name)}</b> ${e.edge_type} → <b>${esc(e.b.name)}</b>` +
+    ` · ${e.details.length} link${e.details.length === 1 ? "" : "s"}<br>${shown}${more}`;
+}
+
 function render() {
   svg.innerHTML = "";
-  // arrowheads, one per edge type
   const defs = document.createElementNS(NS, "defs");
   for (const t of EDGE_TYPES) {
     const m = document.createElementNS(NS, "marker");
@@ -366,18 +410,21 @@ function render() {
     path.setAttribute("class", "edge" + (selected && e.a !== selected && e.b !== selected ? " faded" : ""));
     path.setAttribute("d", edgePath(e));
     path.setAttribute("stroke", css(typeVar[e.edge_type] || "--muted"));
+    // bundle weight: 1 link = hairline, 50 links = visibly heavy, never absurd
+    path.setAttribute("stroke-width", 1.5 + Math.min(4.5, Math.log2(e.details.length + 1)));
     path.setAttribute("marker-end", `url(#arrow-${e.edge_type})`);
-    path.addEventListener("pointermove", (ev) => showTip(ev, `<b>${e.a.name}</b> ${e.edge_type} → <b>${e.b.name}</b><br>${esc(e.detail)}`));
+    path.addEventListener("pointermove", (ev) => showTip(ev, edgeTip(e)));
     path.addEventListener("pointerleave", hideTip);
     svg.appendChild(path);
   }
 
   for (const n of nodes) {
     const g = document.createElementNS(NS, "g");
-    g.setAttribute("class", "node" + (n === selected ? " selected" : "") +
+    g.setAttribute("class", "node" + (n === selected ? " selected" : "") + (n.pinned ? " pinned" : "") +
       (selected && n !== selected && !adjacent(n, selected) ? " faded" : ""));
     g.setAttribute("transform", `translate(${n.x},${n.y})`);
     const c = document.createElementNS(NS, "circle");
+    c.setAttribute("class", "body");
     c.setAttribute("r", n.r);
     g.appendChild(c);
     if (n.stale) {
@@ -389,50 +436,71 @@ function render() {
       g.appendChild(dot);
     }
     const t = document.createElementNS(NS, "text");
-    t.setAttribute("y", n.r + 15);
+    t.setAttribute("y", n.r + 14);
     t.textContent = n.name;
     g.appendChild(t);
     g.__node = n;
     g.addEventListener("pointermove", (ev) => {
-      if (!dragNode) showTip(ev, `<b>${n.name}</b><br>${n.degree} connection${n.degree === 1 ? "" : "s"}${n.stale ? " · needs reindex" : ""}`);
+      if (!dragNode) showTip(ev, `<b>${esc(n.name)}</b><br>${n.links} link${n.links === 1 ? "" : "s"} across ${n.degree} connection${n.degree === 1 ? "" : "s"}` +
+        `${n.stale ? " · needs reindex" : ""}${n.pinned ? " · pinned (double-click to release)" : ""}`);
     });
     g.addEventListener("pointerleave", hideTip);
+    g.addEventListener("dblclick", (ev) => {
+      ev.preventDefault();
+      n.pinned = false;
+      alpha = Math.max(alpha, reducedMotion ? 0 : 0.2);
+      reducedMotion ? (tickSettle(), render()) : kick();
+    });
     svg.appendChild(g);
   }
 }
+function tickSettle() { for (let i = 0; i < 120; i++) tick(); alpha = 0; }
 function adjacent(a, b) {
   return edges.some((e) => !hidden.has(e.edge_type) &&
     ((e.a === a && e.b === b) || (e.a === b && e.b === a)));
 }
-// --- drag vs click -----------------------------------------------------------
+
+// --- drag / click / pan ---------------------------------------------------------
 // Pointer capture eats click events, so selection is decided on pointerup: a
-// press that never moved more than 4px is a click; anything further is a drag.
-let dragNode = null, downPos = null, dragMoved = false;
+// press that never moved more than 4px is a click; a moved press on a node
+// drags it (and pins it where it lands); a moved press on the background pans.
+let dragNode = null, downPos = null, dragMoved = false, panStart = null;
 svg.addEventListener("pointerdown", (ev) => {
   const g = ev.target.closest && ev.target.closest("g.node");
   dragNode = g ? g.__node : null;
   downPos = [ev.clientX, ev.clientY];
   dragMoved = false;
-  if (dragNode) {
-    svg.setPointerCapture(ev.pointerId);
-    hideTip();
-  }
+  panStart = dragNode ? null : { x: view.x, y: view.y, cx: ev.clientX, cy: ev.clientY };
+  svg.setPointerCapture(ev.pointerId);
+  if (dragNode) hideTip();
 });
 svg.addEventListener("pointermove", (ev) => {
-  if (!dragNode || !downPos) return;
+  if (!downPos) return;
   if (!dragMoved && Math.hypot(ev.clientX - downPos[0], ev.clientY - downPos[1]) < 4) return;
   dragMoved = true;
   svg.classList.add("dragging");
-  const r = svg.getBoundingClientRect();
-  dragNode.x = ev.clientX - r.left;
-  dragNode.y = ev.clientY - r.top;
-  alpha = Math.max(alpha, reducedMotion ? 0 : 0.25);
-  reducedMotion ? render() : kick();
+  if (dragNode) {
+    const [gx, gy] = toGraph(ev);
+    dragNode.x = gx;
+    dragNode.y = gy;
+    alpha = Math.max(alpha, reducedMotion ? 0 : 0.15);
+    reducedMotion ? render() : kick();
+  } else if (panStart) {
+    view.x = panStart.x - (ev.clientX - panStart.cx) / view.k;
+    view.y = panStart.y - (ev.clientY - panStart.cy) / view.k;
+    applyView();
+  }
 });
 svg.addEventListener("pointerup", () => {
-  if (!dragMoved) select(dragNode); // still press: select node, or clear on empty space
+  if (!dragMoved) {
+    select(dragNode); // still press: select node, or clear on empty space
+  } else if (dragNode) {
+    dragNode.pinned = true; // stays where you put it; double-click to release
+    render();
+  }
   dragNode = null;
   downPos = null;
+  panStart = null;
   svg.classList.remove("dragging");
 });
 
@@ -452,9 +520,11 @@ function select(n) {
       .map((e) => {
         const out = e.a === n;
         const other = out ? e.b.name : e.a.name;
+        const shown = e.details.slice(0, 6).map(esc).join(", ");
+        const more = e.details.length > 6 ? `, +${e.details.length - 6} more` : "";
         return `<li><span class="dot" style="background:var(${typeVar[e.edge_type]})"></span>
-          <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${e.edge_type}
-          <span class="mono">${esc(e.detail)}</span></span></li>`;
+          <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${e.edge_type} (${e.details.length})
+          <span class="mono">${shown}${more}</span></span></li>`;
       }).join("");
     panelBody.innerHTML = `
       <h2>${esc(n.name)}</h2>
