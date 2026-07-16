@@ -29,6 +29,8 @@ Usage:
   greybeard update                   self-update to the latest release
   greybeard clean [--all]            forget all extracted relations (build
                                      re-creates them); --all also unregisters repos
+  greybeard uninstall [--purge]      remove this binary; --purge also deletes
+                                     the graph data (~/.greybeard)
   greybeard check --cwd <path>       session-start freshness check (used by hooks)
 
 Configuration:
@@ -57,6 +59,8 @@ func main() {
 		err = cmdUpdate(ctx, os.Args[2:])
 	case "clean":
 		err = cmdClean(ctx, os.Args[2:])
+	case "uninstall":
+		err = cmdUninstall(ctx, os.Args[2:])
 	case "check":
 		err = cmdCheck(ctx, os.Args[2:])
 	case "reindex":

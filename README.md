@@ -171,6 +171,18 @@ for remoteless repos), so the same repo cloned twice is one node, not two.
 Freshness is per-repo via `last_indexed_at`; the session-start hook re-queues
 extraction for anything older than `GREYBEARD_STALE_AFTER` (default `24h`).
 
+## Uninstall
+
+```sh
+greybeard uninstall           # removes the binary, keeps the graph data
+greybeard uninstall --purge   # removes the binary and ~/.greybeard
+```
+
+(Use `sudo` if the binary lives in `/usr/local/bin`.) Then remove the plugin
+from Claude Code with `/plugin uninstall greybeard@greybeard`. If you
+installed via `go install`, that copy lives in `~/go/bin` — run uninstall
+from there too, or just `rm ~/go/bin/greybeard`.
+
 ## Building locally
 
 ```sh
