@@ -36,9 +36,19 @@ function write(rel, content) {
 // developers.openai.com/codex/skills, mid-2026). Install by copying this
 // directory to .agents/skills/greybeard (repo) or ~/.agents/skills/greybeard
 // (user); older Codex builds used ~/.codex/skills/.
+// Codex has no session hooks, so the hook section is rewritten with accurate
+// freshness guidance; the bundled bootstrap script still makes the MCP server
+// self-installing.
+const codexBody = body.replace(
+  /## You don't need to trigger indexing yourself\n[\s\S]*?(?=\n## )/,
+  `## Keeping the graph fresh
+
+Codex has no session hooks, so indexing does not happen automatically here. If a query returns empty for a repo that plausibly has cross-repo ties, its extraction may be missing or stale — call the \`init_root\` / \`build_graph\` MCP tools (or suggest \`greybeard build\` in a terminal) rather than asserting the repo has no dependencies.
+`
+);
 write(
   path.join('adapters', 'codex', 'greybeard', 'SKILL.md'),
-  `---\nname: greybeard\ndescription: ${description}\n---\n\n${body}\n`
+  `---\nname: greybeard\ndescription: ${description}\n---\n\n${codexBody}\n`
 );
 // Ship the reference docs alongside, so the body's references/*.md links resolve.
 for (const ref of fs.readdirSync(path.join(skillDir, 'references'))) {
@@ -47,15 +57,34 @@ for (const ref of fs.readdirSync(path.join(skillDir, 'references'))) {
     fs.readFileSync(path.join(skillDir, 'references', ref), 'utf8')
   );
 }
+// Ship the bootstrap launcher: `codex mcp add greybeard -- <skill>/scripts/greybeard.sh serve`
+// fetches the binary on first use, so Codex needs no curl step either.
+write(
+  path.join('adapters', 'codex', 'greybeard', 'scripts', 'greybeard.sh'),
+  fs.readFileSync(path.join(repoRoot, 'scripts', 'greybeard.sh'), 'utf8')
+);
+fs.chmodSync(path.join(outRoot, 'adapters', 'codex', 'greybeard', 'scripts', 'greybeard.sh'), 0o755);
 
 // --- Instruction-only adapter (Cursor, Windsurf, Cline, ...) -----------------
 // No skill/plugin system on these hosts: flatten to an always-on ruleset with
-// no frontmatter, and point the closing reference line at the README since the
-// references/ files don't ship with a pasted ruleset.
-const flattened = body.replace(
-  /^See `references\/mcp-tools\.md`.*$/m,
-  'See the greybeard README (https://github.com/deepaksinghcs14/greybeard) for full tool signatures and the node/edge model if you need to reason about what the graph does and doesn\'t capture.'
-);
+// no frontmatter. Every references/*.md pointer is redirected to the README
+// (those files don't ship with a pasted ruleset), and the session-start-hook
+// section is rewritten — these hosts have no hooks, so indexing is manual.
+const README = 'the greybeard README (https://github.com/deepaksinghcs14/greybeard)';
+const flattened = body
+  .replace(
+    /^See `references\/mcp-tools\.md`.*$/m,
+    `See ${README} for full tool signatures and the node/edge model if you need to reason about what the graph does and doesn't capture.`
+  )
+  .replace(/\(see `references\/mcp-tools\.md`[^)]*\)/g, `(see ${README} for exact signatures)`)
+  .replace(/See `references\/graph-schema\.md`[^.]*\./g, `See ${README} for the discovery/freshness rules.`)
+  .replace(
+    /## You don't need to trigger indexing yourself\n[\s\S]*?(?=\n## )/,
+    `## Keeping the graph fresh
+
+This host has no session hooks, so indexing does not happen automatically here. If a query returns empty for a repo that plausibly has cross-repo ties, its extraction may be missing or stale — suggest running \`greybeard build\` (full rebuild) or \`greybeard check --cwd <repo>\` (fast freshness check) in a terminal rather than asserting the repo has no dependencies.
+`
+  );
 const applyWhen = description.replace(/^Use this skill\s+/i, '');
 write(
   path.join('adapters', 'instruction-only', 'greybeard.md'),

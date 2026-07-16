@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -57,6 +60,24 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		return asJSON(st.GetSchemaDependents(ctx, schema))
 	})
 
+	s.AddTool(mcp.NewTool("record_relation",
+		mcp.WithDescription("Record a cross-repo relationship you VERIFIED in code that extraction can't see (URL built from config, ORM table access). Requires evidence (file:line or snippet). Never record guesses — a false edge poisons every future blast-radius answer."),
+		mcp.WithString("from", mcp.Required(), mcp.Description("Repo that depends/calls/reads (short name or identity)")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("Repo that owns the target (short name or identity)")),
+		mcp.WithString("edge_type", mcp.Required(), mcp.Description("imports | calls_api | shares_schema")),
+		mcp.WithString("detail", mcp.Required(), mcp.Description("What exactly: import path, \"POST /orders\", or table name")),
+		mcp.WithString("access_mode", mcp.Description("shares_schema only: read | write | read_write (default read)")),
+		mcp.WithString("evidence", mcp.Required(), mcp.Description("Where you saw it: file:line and/or the code snippet")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		get := func(k string) string { return req.GetString(k, "") }
+		err := st.RecordRelation(ctx, get("from"), get("to"), get("edge_type"),
+			get("detail"), get("access_mode"), get("evidence"))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(`{"recorded": true, "source": "agent"}`), nil
+	})
+
 	s.AddTool(mcp.NewTool("init_root",
 		mcp.WithDescription("Walk a directory tree for git repos and register each in the graph. Run greybeard build (or build_graph) afterwards for the first extraction."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Root folder to scan, e.g. ~/code")),
@@ -64,6 +85,12 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		path, err := req.RequireString("path")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
+		}
+		// agents pass "~/code" literally; the shell isn't here to expand it
+		if strings.HasPrefix(path, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				path = filepath.Join(home, path[2:])
+			}
 		}
 		repos, err := discover.ScanRoot(path)
 		if err != nil {
@@ -80,9 +107,19 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	})
 
 	s.AddTool(mcp.NewTool("build_graph",
-		mcp.WithDescription("Full rebuild: re-extract every registered repo and repopulate all nodes/edges. Safe to rerun; not incremental."),
+		mcp.WithDescription("Full rebuild: re-extract every registered repo and repopulate all nodes/edges. Safe to rerun; not incremental. The result's progress_log lists per-repo outcomes (✓ extracted with counts, ✗ failed with reason) — relay it so the user sees which repos are covered."),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return asJSON(st.BuildAll(ctx, nil))
+		// MCP tools can't stream, so the per-repo progress lines ride along
+		// in the result for the agent to show.
+		var log []string
+		res, err := st.BuildAll(ctx, func(line string) { log = append(log, line) })
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return asJSON(struct {
+			graph.BuildResult
+			ProgressLog []string `json:"progress_log"`
+		}{res, log}, nil)
 	})
 
 	s.AddTool(mcp.NewTool("audit_graph",

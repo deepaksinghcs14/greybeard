@@ -90,6 +90,11 @@ func cmdUpdate(ctx context.Context, args []string) error {
 		}
 	}
 	if err := os.Rename(staged, exe); err != nil {
+		if runtime.GOOS == "windows" {
+			// roll the parked binary back so PATH never ends up empty
+			os.Rename(exe+".old", exe)
+		}
+		os.Remove(staged)
 		return permissionHint(err, exe)
 	}
 	say("updated greybeard %s → %s", version, latest)
@@ -159,5 +164,6 @@ func maybeAutoUpdate() {
 	}
 	c := exec.Command(exe, "update", "--quiet")
 	c.Stdout, c.Stderr = nil, nil
+	detach(c)
 	_ = c.Start() // detached, same pattern as background reindex
 }

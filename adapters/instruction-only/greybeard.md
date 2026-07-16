@@ -16,13 +16,13 @@ Claude Code normally only sees the repo it's working in. This skill fills that g
 
 Skip this for changes fully contained within one repo with no exported surface (internal-only functions, private types, test files).
 
-## You don't need to trigger indexing yourself
+## Keeping the graph fresh
 
-A session-start hook checks whether the current repo is registered and fresh before you're even asked to do anything, and queues extraction in the background if not. If a query comes back empty for a repo that was only just opened for the first time, that may mean extraction is still running rather than "no dependencies exist" — say so rather than asserting the repo has no cross-repo ties. See `references/graph-schema.md` for the discovery/freshness rules.
+This host has no session hooks, so indexing does not happen automatically here. If a query returns empty for a repo that plausibly has cross-repo ties, its extraction may be missing or stale — suggest running `greybeard build` (full rebuild) or `greybeard check --cwd <repo>` (fast freshness check) in a terminal rather than asserting the repo has no dependencies.
 
 ## How to query
 
-Call the MCP tool exposed by the graph server (see `references/mcp-tools.md` for exact signatures). The three core queries:
+Call the MCP tool exposed by the graph server (see the greybeard README (https://github.com/deepaksinghcs14/greybeard) for exact signatures). The three core queries:
 
 1. `get_related_repos(repo, max_hops)` — what repos are connected to this one, and how (import, API call, shared schema)
 2. `get_callers_of(endpoint_or_symbol)` — reverse lookup: what calls this specific thing
@@ -44,8 +44,15 @@ Results come back as structured edges (JSON). Before using them:
 - If the graph shows a caller relationship but you can't access that other repo, flag the specific dependency clearly enough that the user can check it themselves.
 - Never silently make a breaking change to something with known dependents.
 
+## Teaching the graph what you see
+
+Extraction is text-level and misses relationships you can verify while working — a URL assembled from config, an ORM writing a table with no raw SQL. When you *confirm* such a cross-repo relationship in code, record it with `record_relation` (from, to, edge_type, detail, evidence — cite the file:line you saw). Rules:
+
+- Only record what you verified in the code in front of you — never inference from naming, docs, or memory. A false edge poisons every future blast-radius answer.
+- Results carry a `source` field: `scanned` edges come from extraction, `agent` edges from recorded observations. Weigh them accordingly when summarizing.
+
 ## If the MCP tool isn't available
 
-The graph server may not be connected in every session. If the tool call fails or isn't in the tool list, say so plainly and offer to proceed without cross-repo awareness, rather than guessing at relationships from memory or repo naming conventions.
+The graph server may not be connected in every session. If the tool call fails or isn't in the tool list, say so plainly and offer to proceed without cross-repo awareness, rather than guessing at relationships from memory or repo naming conventions. The plugin normally bootstraps the binary automatically on first use (macOS/Linux), so a persistent failure usually means the download was blocked or the platform is Windows — offer the manual fix: `go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest` (or a prebuilt binary from the project's GitHub Releases), then restart the session.
 
 See the greybeard README (https://github.com/deepaksinghcs14/greybeard) for full tool signatures and the node/edge model if you need to reason about what the graph does and doesn't capture.

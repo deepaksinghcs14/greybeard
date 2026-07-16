@@ -3,7 +3,7 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "greybeard check --cwd \"$CLAUDE_PROJECT_DIR\"" }
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/greybeard.sh\" check --cwd \"$CLAUDE_PROJECT_DIR\" >/dev/null 2>&1 || true" }
         ]
       }
     ]

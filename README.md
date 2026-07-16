@@ -1,193 +1,197 @@
-# greybeard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo.svg" width="220" alt="greybeard, the old man who remembers what your repos forgot">
+  </picture>
+</p>
 
-**He remembers what your repos forgot.**
+<h1 align="center">greybeard</h1>
+
+<p align="center">
+  <em>He remembers what your repos forgot.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/github/v/release/deepaksinghcs14/greybeard?style=flat-square&color=111111&label=release" alt="Release">
+  <img src="https://img.shields.io/github/license/deepaksinghcs14/greybeard?style=flat-square&color=111111" alt="MIT license">
+  <img src="https://img.shields.io/badge/storage-1%20sqlite%20file-111111?style=flat-square" alt="One SQLite file">
+</p>
 
 The old man has been here longer than any of your microservices. He watched
 `orders-svc` split off from the monolith. He remembers who still reads that
-table you think nobody uses. Ask him before you touch anything.
+table you think nobody uses. Your AI agent is scoped to one repo at a time;
+he isn't. greybeard puts him behind an MCP server your agent asks before it
+makes a locally-correct, globally-breaking change.
 
-## The problem
+## Before / after
 
-Claude Code and Codex are scoped to whichever repo they're opened in. Neither
-can answer *"what depends on this endpoint?"* or *"is it safe to delete this
-schema column?"* — the information exists, scattered across `go.mod` files,
-OpenAPI specs, proto definitions, and migrations in your other repos, but
-nothing extracts and connects it. So your agent makes a locally-correct,
-globally-breaking change, and you find out in production.
+You ask your agent to rename the `total` column in the orders table.
 
-## What it does
+Without greybeard:
 
-1. **Extract** — walks your repos once, parsing `go.mod` / `package.json`,
-   OpenAPI specs, `.proto` files, and SQL migrations into declared surface:
-   packages, endpoints, schemas.
-2. **Store** — connects them into a typed graph (who imports what, who calls
-   what, who reads whose tables) in an embedded SQLite file
-   (`~/.greybeard/graph.db`). Nothing to install, start, or babysit.
-3. **Serve** — exposes the graph to any MCP-speaking agent over stdio. No
-   hosted service, no API keys, no telemetry. Everything stays on your machine.
-4. **Answer** — three narrow queries an agent asks before changing anything:
-   what's related to this repo, who calls this thing, who depends on this schema.
+> Done — updated the migration, the model, and all references in this repo.
+> All tests pass. ✅
 
-## Commands
+*(billing-svc's nightly reconciliation, which reads `orders.total` directly,
+breaks silently at 2am.)*
 
-| Command | What it does |
-|---|---|
-| `greybeard init --root <path>` | Scan a tree for git repos and register every one found |
-| `greybeard build` | Full extraction across all registered repos (safe to rerun; not incremental) |
-| `greybeard serve` | MCP server over stdio — this is what your agent talks to |
-| `greybeard visualize` | Open the graph as an interactive local web page (`--port`, default 7333) |
-| `greybeard update` | Self-update to the latest GitHub release |
-| `greybeard check --cwd <path>` | Session-start freshness check: no-ops if the repo is registered and fresh, otherwise queues background extraction and returns immediately |
+With greybeard:
 
-`check` also self-updates the binary in the background at most once a day, so
-agent sessions keep greybeard current without anyone running `update` by hand
-(`GREYBEARD_AUTO_UPDATE=off` disables this).
+> Before I touch this: the graph shows **billing-svc** reads the `orders`
+> schema directly. A rename will break its reconciliation silently. Proceed
+> and flag billing-svc, add a compatibility view, or hold off?
 
-Inside Claude Code, the plugin adds `/greybeard-init`, `/greybeard-build`,
-`/greybeard-query`, and `/greybeard-audit` on top of these.
+## How it works
+
+```
+1. Extract   what repos declare: go.mod/package.json, OpenAPI, protos, SQL migrations
+2. Store     a typed graph in one SQLite file (~/.greybeard/graph.db)
+3. Serve     three MCP queries: what's related · who calls this · who reads this schema
+4. Learn     agents record relationships they verify in code, with file:line evidence
+```
+
+Every edge carries its type — `imports` (declared, hard fact) ›
+`calls_api` (matched in quoted strings) › `shares_schema` (matched in SQL
+context) — and its provenance (`scanned` vs `agent`), so the agent knows how
+hard each constraint is. Below the evidence bar nothing enters the graph:
+names a repo declares itself resolve locally, `/health` never links anything,
+and a `users` table only links repos that already share a harder edge. Same
+name is not same thing. Node/edge model:
+[graph-schema.md](skills/greybeard/references/graph-schema.md).
+
+A session-start hook keeps the current repo's data fresh (and the binary
+updated) automatically. Extraction gaps are "unknown," never "no dependency."
 
 ## Install
 
-**1. The binary** — that's the whole setup; storage is an embedded SQLite
-file greybeard creates itself. Grab a prebuilt binary from
-[Releases](https://github.com/deepaksinghcs14/greybeard/releases):
+### Claude Code
 
-```sh
-# macOS Apple Silicon (see Releases for darwin/linux/windows, amd64/arm64)
+```
+/plugin marketplace add deepaksinghcs14/greybeard
+```
+```
+/plugin install greybeard@greybeard
+```
+
+That's everything on macOS/Linux — skill, slash commands, session hook, MCP
+server, and the binary bootstraps itself on first use (downloaded once from
+Releases, sha256-verified). Then index your repos, once:
+
+```
+/greybeard-init ~/code
+/greybeard-build
+```
+
+### Codex
+
+```bash
+cp -r adapters/codex/greybeard ~/.agents/skills/greybeard
+codex mcp add greybeard -- ~/.agents/skills/greybeard/scripts/greybeard.sh serve
+```
+
+Same self-bootstrapping launcher. Older Codex builds read `~/.codex/skills/`.
+
+### Prebuilt binary
+
+Required on Windows; optional everywhere else. See
+[Releases](https://github.com/deepaksinghcs14/greybeard/releases) for
+darwin/linux/windows, amd64/arm64:
+
+```bash
+# macOS Apple Silicon
 sudo curl -L https://github.com/deepaksinghcs14/greybeard/releases/latest/download/greybeard_darwin_arm64 -o /usr/local/bin/greybeard
 sudo chmod +x /usr/local/bin/greybeard
 ```
 
-or build from source if you have Go:
+### From source
 
-```sh
+```bash
 go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest
 ```
 
-**2. Claude Code:**
+A binary already on PATH always beats the bootstrap, so your build stays in charge.
 
-```
-/plugin marketplace add deepaksinghcs14/greybeard
-/plugin install greybeard@greybeard
-```
+### Cursor / Windsurf / Cline
 
-That wires up the skill, the slash commands, the MCP server, and a
-session-start hook that keeps the current repo's graph data fresh
-automatically.
+No plugin system on these hosts — three pieces: install the binary (above),
+paste [`adapters/instruction-only/greybeard.md`](adapters/instruction-only/greybeard.md)
+into your always-on rules (`.cursorrules` / `.windsurfrules` / Cline custom
+instructions), and register the MCP server:
 
-**3. Codex:** copy the generated skill into Codex's skills directory and
-register the MCP server:
-
-```sh
-cp -r adapters/codex/greybeard ~/.agents/skills/greybeard
-codex mcp add greybeard -- greybeard serve
+```json
+{ "mcpServers": { "greybeard": { "command": "greybeard", "args": ["serve"] } } }
 ```
 
-(Older Codex builds read `~/.codex/skills/` instead.)
+Cursor: `~/.cursor/mcp.json` · Windsurf: `~/.codeium/windsurf/mcp_config.json` ·
+Cline: MCP Servers panel. Then `greybeard init --root ~/code && greybeard build`
+in a terminal; no hooks here, so rerun `build` when the graph feels stale.
 
-**Cursor / Windsurf / Cline:** paste `adapters/instruction-only/greybeard.md`
-into your always-on rules, and register `greybeard serve` as a stdio MCP
-server however your editor does that.
+### Uninstall
 
-**4. First index:**
-
-```sh
-greybeard init --root ~/code
-greybeard build
+```bash
+greybeard uninstall --purge   # removes the binary and ~/.greybeard
 ```
 
-## What it looks like
+Then `/plugin uninstall greybeard@greybeard` in Claude Code. A `go install`
+copy lives in `~/go/bin` — remove that one too if you made one.
 
-**Without greybeard:**
+## Commands
 
-> **You:** Rename the `total` column in the orders table to `amount`.
->
-> **Agent:** Done — updated the migration, the model, and all references in
-> this repo. All tests pass. ✅
->
-> *(billing-svc's nightly reconciliation, which reads `orders.total` directly,
-> breaks silently at 2am.)*
+| Command | What it does |
+|---------|--------------|
+| `/greybeard-init` | Register every repo under a root — run once |
+| `/greybeard-build` | Full extraction, per-repo progress relayed in chat |
+| `/greybeard-query` | Ask the graph anything, in plain language |
+| `/greybeard-audit` | What's empty, what's stale — changes nothing |
+| `greybeard visualize` | Interactive force-directed graph in your browser |
+| `greybeard build --background` | Detached build, desktop notification when done |
+| `greybeard clean [--all]` | Forget extracted relations (`--all`: everything) |
+| `greybeard update` | Self-update — also runs daily in the background |
 
-**With greybeard:**
+The agent-facing queries (`get_related_repos`, `get_callers_of`,
+`get_schema_dependents`, `record_relation`) are documented in
+[mcp-tools.md](skills/greybeard/references/mcp-tools.md).
 
-> **You:** Rename the `total` column in the orders table to `amount`.
->
-> **Agent:** Before I touch this: the graph shows the `orders` schema has a
-> dependent outside this repo — **billing-svc** reads it directly
-> (access mode: read). A rename will break its reconciliation queries
-> silently. Want me to (a) proceed and flag billing-svc for a follow-up
-> change, (b) add a compatibility view, or (c) hold off?
+## Development
 
-**Without greybeard:**
+```bash
+make install-system   # build + install to ~/go/bin AND /usr/local/bin (what hooks resolve)
+make check            # everything CI runs: build, vet, tests, adapter freshness
+make adapters         # regenerate adapters/ after editing the canonical skill
+```
 
-> **You:** This `POST /orders` endpoint has a weird response shape. Clean it up.
->
-> **Agent:** Restructured the response. Nothing in this repo consumed the old
-> shape, so it's a safe change. ✅ *(It wasn't.)*
+After switching binaries, `greybeard clean && greybeard build` so the graph
+reflects the current extraction rules. macOS note: never `cp` over a binary
+in place — Apple Silicon kills it on a stale code signature; the make targets
+do the safe remove-then-copy.
 
-**With greybeard:**
+## FAQ
 
-> **You:** This `POST /orders` endpoint has a weird response shape. Clean it up.
->
-> **Agent:** `get_callers_of("POST /orders")` shows one caller: **billing-svc**
-> (edge type: calls_api — a runtime dependency, so it can be versioned rather
-> than broken). I'll keep the old shape working and add the cleaned-up shape
-> alongside, unless you'd rather coordinate a breaking change with billing-svc.
+**Does it phone home?**
+No. One SQLite file on your machine. No hosted service, no API keys, no telemetry.
 
-## The graph
+**Why not Neo4j? Or Postgres?**
+A few hundred repos make a few thousand edges, and the queries are exact
+lookups plus a shallow walk. That workload doesn't earn a database server to
+install, start, and babysit. If your graph hits millions of edges, that's the
+ceiling where a real graph database starts paying rent.
 
-Nodes:
+**The graph shows a connection that can't be real.**
+Click the edge in `greybeard visualize` — the tooltip lists the exact
+tables/paths (and for agent-recorded edges, the file:line evidence) behind
+it. The matching rules err toward dropping weak evidence, because a false
+edge is worse than a missing one. If a phantom survives, file an issue with
+the tooltip contents.
 
-| Label     | Key fields                              | Populated from                 |
-|-----------|------------------------------------------|--------------------------------|
-| Repo      | remote_url, local_path, last_indexed_at  | git discovery                  |
-| Endpoint  | path, method, repo                       | OpenAPI specs, proto files     |
-| Schema    | name, repo                               | migration files, proto messages |
-| Package   | import_path, repo                        | go.mod / package.json          |
+**What doesn't it know?**
+Runtime call frequency (all edges weigh the same), undeclared dependencies (a
+hardcoded URL in a shell script), repos it hasn't extracted yet, and
+semantics — matching is contextual text scanning, not AST analysis. Treat
+hits as "worth checking," not proof.
 
-Edges (every query result carries its edge type — `imports` is a hard
-compile-time constraint, `calls_api` is runtime and can be versioned,
-`shares_schema` is a data contract that breaks silently):
-
-| Type           | From → To        | Meaning                                  |
-|----------------|------------------|-------------------------------------------|
-| imports        | Repo → Package   | compile-time dependency                   |
-| calls_api      | Repo → Endpoint  | runtime HTTP/gRPC call                    |
-| shares_schema  | Repo → Schema    | reads or writes a shared data model       |
-| depends_on     | Repo → Repo      | rolled-up summary edge, recomputed each build |
-
-Repo identity is the normalized git remote URL (falling back to absolute path
-for remoteless repos), so the same repo cloned twice is one node, not two.
-Freshness is per-repo via `last_indexed_at`; the session-start hook re-queues
-extraction for anything older than `GREYBEARD_STALE_AFTER` (default `24h`).
-
-## Why embedded SQLite, not a graph database
-
-Because the graph is small and the queries are shallow. A few hundred repos
-produce a few thousand edges, and the three agent-facing queries are exact
-lookups plus a 1–3 hop walk — no workload that earns a Neo4j (or even a
-Postgres + Apache AGE) daemon to install, start, and babysit. SQLite is one
-file at `~/.greybeard/graph.db` (override with `GREYBEARD_DB`), created on
-first run, inspectable with the `sqlite3` CLI, backed up with `cp`. If your
-graph ever hits millions of edges with deep traversals, that's the ceiling
-where a real graph database starts paying rent; the storage layer is one
-small package if that day comes.
-
-## What greybeard doesn't know
-
-Honesty section. The graph is built from *declared* surface, so it does not
-capture:
-
-- **Runtime call frequency or criticality** — all edges weigh the same; the
-  once-a-year admin script and the hot path look identical.
-- **Undeclared dependencies** — an endpoint hit via a hardcoded URL in a shell
-  script, a table read by a BI tool, anything outside the parsed manifests.
-- **Repos it hasn't extracted yet** — a gap is "unknown," not "no dependency."
-  If a repo was first opened minutes ago, extraction may still be running.
-- **Semantic matches** — reference detection is text scanning, not per-language
-  AST analysis. It errs toward flagging (a table name in a comment counts as a
-  reference); treat hits as "worth checking," not proof.
+**Why "greybeard"?**
+Ask him about light mode.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE).

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -54,13 +55,25 @@ CREATE TABLE IF NOT EXISTS edges (
 	method      TEXT NOT NULL DEFAULT '', -- calls_api only
 	path        TEXT NOT NULL DEFAULT '', -- calls_api only
 	access_mode TEXT NOT NULL DEFAULT '', -- shares_schema only: read | write
+	source      TEXT NOT NULL DEFAULT 'scanned', -- scanned | agent
+	evidence    TEXT NOT NULL DEFAULT '', -- agent edges: why (file:line, snippet)
 	PRIMARY KEY (from_repo, edge_type, to_repo, detail)
 );
 -- The rolled-up Repo->Repo summary from the graph schema, derived rather
 -- than recomputed: every underlying edge already knows both repos.
-CREATE VIEW IF NOT EXISTS depends_on AS
-	SELECT DISTINCT from_repo, to_repo, edge_type, detail FROM edges WHERE from_repo <> to_repo;
+-- Recreated (not IF NOT EXISTS) so column additions reach existing stores.
+DROP VIEW IF EXISTS depends_on;
+CREATE VIEW depends_on AS
+	SELECT DISTINCT from_repo, to_repo, edge_type, detail, source FROM edges WHERE from_repo <> to_repo;
 `
+
+// migrations are idempotent column additions for stores created before the
+// column existed (CREATE TABLE IF NOT EXISTS won't alter them). "duplicate
+// column name" errors are expected and ignored.
+var migrations = []string{
+	`ALTER TABLE edges ADD COLUMN source TEXT NOT NULL DEFAULT 'scanned'`,
+	`ALTER TABLE edges ADD COLUMN evidence TEXT NOT NULL DEFAULT ''`,
+}
 
 // Open opens (creating if needed) the database at GREYBEARD_DB, default
 // ~/.greybeard/graph.db.
@@ -85,6 +98,18 @@ func Open(ctx context.Context) (*Store, error) {
 	// One connection: SQLite allows a single writer anyway, and this keeps
 	// concurrent goroutines (parallel build) trivially safe in-process.
 	db.SetMaxOpenConns(1)
+	// migrations must run before the schema block: the depends_on view it
+	// recreates selects columns the ALTERs add on pre-existing stores.
+	// "duplicate column" = already migrated; "no such table" = fresh store,
+	// the CREATE TABLE below includes the columns.
+	for _, m := range migrations {
+		if _, err := db.ExecContext(ctx, m); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column") &&
+			!strings.Contains(err.Error(), "no such table") {
+			db.Close()
+			return nil, fmt.Errorf("migrating graph store at %s: %w", path, err)
+		}
+	}
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cannot open graph store at %s: %w", path, err)

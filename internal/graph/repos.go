@@ -32,7 +32,13 @@ func (s *Store) UpsertRepo(ctx context.Context, r discover.Repo) error {
 // SetIndexed stamps a repo as freshly extracted and records its declared
 // module/package names (used to match other repos' deps during reindex).
 func (s *Store) SetIndexed(ctx context.Context, identity string, at time.Time, modules []string) error {
-	_, err := s.db.ExecContext(ctx,
+	return setIndexedIn(ctx, s.db, identity, at, modules)
+}
+
+// setIndexedIn is SetIndexed against the pool or a transaction — builds stamp
+// freshness inside the same transaction that writes the edges.
+func setIndexedIn(ctx context.Context, x dbtx, identity string, at time.Time, modules []string) error {
+	_, err := x.ExecContext(ctx,
 		`UPDATE repos SET last_indexed_at = ?, modules = ? WHERE identity = ?`,
 		at.UTC().Format(time.RFC3339), strings.Join(modules, ","), identity)
 	return err

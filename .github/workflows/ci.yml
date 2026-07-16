@@ -16,6 +16,11 @@ jobs:
       - run: go build ./...
       - run: go vet ./...
       - run: go test ./...
+      # Catch a broken release config before tag time.
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
       - uses: actions/setup-node@v5
         with:
           node-version: 22

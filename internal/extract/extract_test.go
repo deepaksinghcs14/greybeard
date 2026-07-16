@@ -95,31 +95,84 @@ func TestExtractUnparseableManifestIsNonFatal(t *testing.T) {
 }
 
 func TestScanRefs(t *testing.T) {
-	subs, words := ScanRefs(billingFixture,
+	paths, tables, _ := ScanRefs(billingFixture,
 		[]string{"/orders", "/orders/{id}", "/nothing-here"},
-		[]string{"orders", "order", "customers"})
-	if !subs["/orders"] {
-		t.Error("expected substring hit for /orders")
+		[]string{"orders", "order", "order_items", "customers"},
+		nil)
+	if !paths["/orders"] {
+		t.Error("expected path hit for /orders (quoted in client code)")
 	}
-	if subs["/orders/{id}"] || subs["/nothing-here"] {
-		t.Errorf("unexpected substring hits: %v", subs)
+	if paths["/orders/{id}"] || paths["/nothing-here"] {
+		t.Errorf("unexpected path hits: %v", paths)
 	}
-	if !words["orders"] {
-		t.Error("expected word hit for orders")
+	if tables["orders"] != "read" {
+		t.Errorf("orders should be a read (FROM orders), got %q", tables["orders"])
 	}
-	if words["order"] {
-		t.Error("word match must respect boundaries: 'order' should not hit inside 'orders'")
+	if _, ok := tables["order"]; ok {
+		t.Error("table match must respect word boundaries")
 	}
-	if words["customers"] {
+	if _, ok := tables["order_items"]; ok {
+		t.Error("a table name in a comment (no SQL context) must not count as a reference")
+	}
+	if _, ok := tables["customers"]; ok {
 		t.Error("unexpected hit for customers")
+	}
+}
+
+func TestScanRefsQualifiedNamesAndWrites(t *testing.T) {
+	dir := t.TempDir()
+	src := "package x\n" +
+		"const q1 = `SELECT * FROM public.orders`\n" +
+		"const q2 = `INSERT INTO app.events (id) VALUES ($1)`\n" +
+		"const q3 = `UPDATE ledger SET total = 0`\n"
+	os.WriteFile(filepath.Join(dir, "db.go"), []byte(src), 0o644)
+	_, tables, _ := ScanRefs(dir, nil, []string{"orders", "events", "ledger"}, nil)
+	if tables["orders"] != "read" {
+		t.Errorf("qualified FROM public.orders should read, got %q", tables["orders"])
+	}
+	if tables["events"] != "write" {
+		t.Errorf("INSERT INTO app.events should write, got %q", tables["events"])
+	}
+	if tables["ledger"] != "write" {
+		t.Errorf("UPDATE ledger should write, got %q", tables["ledger"])
+	}
+}
+
+func TestCreateTableCapturesUnqualifiedName(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "migrations"), 0o755)
+	sql := "CREATE TABLE public.orders (id uuid);\nCREATE TABLE IF NOT EXISTS \"app\".invoices (id uuid);\n"
+	os.WriteFile(filepath.Join(dir, "migrations", "001.sql"), []byte(sql), 0o644)
+	ex := Repo(dir)
+	if !slices.Contains(ex.Tables, "orders") || !slices.Contains(ex.Tables, "invoices") {
+		t.Errorf("tables = %v, want orders and invoices (not schema qualifiers)", ex.Tables)
+	}
+	if slices.Contains(ex.Tables, "public") || slices.Contains(ex.Tables, "app") {
+		t.Errorf("schema qualifier captured as table: %v", ex.Tables)
+	}
+}
+
+func TestScanRefsMessagesOnlyInProto(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "notes.go"),
+		[]byte("package x\n// handles Order objects\nvar Order int\n"), 0o644)
+	_, _, msgs := ScanRefs(dir, nil, nil, []string{"Order"})
+	if msgs["Order"] {
+		t.Error("message names outside .proto files must not count")
+	}
+	os.WriteFile(filepath.Join(dir, "shared.proto"),
+		[]byte("syntax = \"proto3\";\nmessage Order { string id = 1; }\n"), 0o644)
+	_, _, msgs = ScanRefs(dir, nil, nil, []string{"Order"})
+	if !msgs["Order"] {
+		t.Error("message name in a .proto file should count")
 	}
 }
 
 func TestScanRefsSkipsManifests(t *testing.T) {
 	// billing's go.mod contains "example.com/orders-svc", but manifests are
 	// excluded so a declared dep doesn't double as an API/schema reference.
-	subs, _ := ScanRefs(billingFixture, []string{"example.com/orders-svc"}, nil)
-	if subs["example.com/orders-svc"] {
+	paths, _, _ := ScanRefs(billingFixture, []string{"example.com/orders-svc"}, nil, nil)
+	if paths["example.com/orders-svc"] {
 		t.Error("manifest content should not count as a reference")
 	}
 }

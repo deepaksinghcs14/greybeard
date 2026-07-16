@@ -9,6 +9,8 @@ func createOrder(base string) error {
 }
 
 // reconcileQuery reads the shared orders table for nightly reconciliation.
+// TODO: also reconcile order_items someday (mentioning the table here must
+// NOT create a shares_schema edge — no SQL context).
 const reconcileQuery = `SELECT id, total FROM orders WHERE created_at > $1`
 
 func httpPost(url string) error { return nil }

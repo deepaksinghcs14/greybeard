@@ -178,4 +178,66 @@ func TestEndToEnd(t *testing.T) {
 	if len(callers) != 1 || callers[0].Repo != "billing-svc" {
 		t.Errorf("callers after reindex = %+v", callers)
 	}
+
+	// --- agent-recorded edges: provenance carried, rebuilds preserve them --------
+	if err := st.RecordRelation(ctx, "billing-svc", "orders-svc", "calls_api",
+		"DELETE /orders/{id}", "", "billing/cancel.go:42 — url built from cfg.OrdersBase"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordRelation(ctx, "billing-svc", "orders-svc", "calls_api",
+		"POST /x", "", ""); err == nil {
+		t.Error("recording without evidence must be rejected")
+	}
+	callers, err = st.GetCallersOf(ctx, "DELETE /orders/{id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || callers[0].Source != "agent" {
+		t.Errorf("agent edge = %+v, want source=agent", callers)
+	}
+	if _, err := st.BuildAll(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	callers, err = st.GetCallersOf(ctx, "DELETE /orders/{id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 {
+		t.Errorf("agent edge must survive a rebuild, got %+v", callers)
+	}
+
+	// --- clean: relations gone, registrations kept, everything stale -------------
+	cres, err := st.Clean(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cres.EdgesRemoved == 0 || cres.ReposKept != 2 || cres.ReposRemoved != 0 {
+		t.Errorf("clean = %+v", cres)
+	}
+	callers, err = st.GetCallersOf(ctx, "POST /orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 0 {
+		t.Errorf("callers after clean should be empty: %+v", callers)
+	}
+	aud, err = st.Audit(ctx, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aud.TotalRepos != 2 || len(aud.EmptyRepos) != 2 || len(aud.StaleRepos) != 2 {
+		t.Errorf("audit after clean = %+v", aud)
+	}
+
+	// clean --all: full reset
+	if _, err := st.Clean(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := st.ListRepos(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaining) != 0 {
+		t.Errorf("repos after clean --all: %+v", remaining)
+	}
 }

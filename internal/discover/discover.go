@@ -107,11 +107,15 @@ func remoteURL(gitDir string) string {
 }
 
 // ScanRoot walks root for .git directories and returns every repo found.
-// Unreadable subtrees are skipped, not fatal.
+// Unreadable subtrees are skipped, not fatal — but a root that doesn't exist
+// is an error, not "0 repos found".
 func ScanRoot(root string) ([]Repo, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
+	}
+	if fi, err := os.Stat(abs); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("root %s is not a directory", abs)
 	}
 	var repos []Repo
 	err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {

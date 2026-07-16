@@ -45,8 +45,15 @@ Results come back as structured edges (JSON). Before using them:
 - If the graph shows a caller relationship but you can't access that other repo, flag the specific dependency clearly enough that the user can check it themselves.
 - Never silently make a breaking change to something with known dependents.
 
+## Teaching the graph what you see
+
+Extraction is text-level and misses relationships you can verify while working — a URL assembled from config, an ORM writing a table with no raw SQL. When you *confirm* such a cross-repo relationship in code, record it with `record_relation` (from, to, edge_type, detail, evidence — cite the file:line you saw). Rules:
+
+- Only record what you verified in the code in front of you — never inference from naming, docs, or memory. A false edge poisons every future blast-radius answer.
+- Results carry a `source` field: `scanned` edges come from extraction, `agent` edges from recorded observations. Weigh them accordingly when summarizing.
+
 ## If the MCP tool isn't available
 
-The graph server may not be connected in every session. If the tool call fails or isn't in the tool list, say so plainly and offer to proceed without cross-repo awareness, rather than guessing at relationships from memory or repo naming conventions.
+The graph server may not be connected in every session. If the tool call fails or isn't in the tool list, say so plainly and offer to proceed without cross-repo awareness, rather than guessing at relationships from memory or repo naming conventions. The plugin normally bootstraps the binary automatically on first use (macOS/Linux), so a persistent failure usually means the download was blocked or the platform is Windows — offer the manual fix: `go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest` (or a prebuilt binary from the project's GitHub Releases), then restart the session.
 
 See `references/mcp-tools.md` for full tool signatures and `references/graph-schema.md` for the node/edge model if you need to reason about what the graph does and doesn't capture.

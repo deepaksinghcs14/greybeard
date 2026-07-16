@@ -17,6 +17,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # Never publish a red build.
+      - run: go test ./...
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

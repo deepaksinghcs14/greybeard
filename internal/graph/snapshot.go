@@ -71,6 +71,9 @@ func (s *Store) Snapshot(ctx context.Context) (VizData, error) {
 			vr.Packages = append(vr.Packages, p)
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return data, err
+		}
 		data.Repos = append(data.Repos, vr)
 	}
 

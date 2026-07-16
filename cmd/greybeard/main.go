@@ -27,6 +27,10 @@ Usage:
   greybeard serve                    MCP server over stdio
   greybeard visualize [--port 7333]  open the graph in your browser
   greybeard update                   self-update to the latest release
+  greybeard clean [--all]            forget all extracted relations (build
+                                     re-creates them); --all also unregisters repos
+  greybeard uninstall [--purge]      remove this binary; --purge also deletes
+                                     the graph data (~/.greybeard)
   greybeard check --cwd <path>       session-start freshness check (used by hooks)
 
 Configuration:
@@ -53,6 +57,10 @@ func main() {
 		err = cmdVisualize(ctx, os.Args[2:])
 	case "update":
 		err = cmdUpdate(ctx, os.Args[2:])
+	case "clean":
+		err = cmdClean(ctx, os.Args[2:])
+	case "uninstall":
+		err = cmdUninstall(ctx, os.Args[2:])
 	case "check":
 		err = cmdCheck(ctx, os.Args[2:])
 	case "reindex":
@@ -111,6 +119,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 		}
 		c := exec.Command(exe, "build", "--notify")
 		c.Stdout, c.Stderr = nil, nil
+		detach(c)
 		if err := c.Start(); err != nil {
 			return err
 		}
@@ -153,6 +162,31 @@ func cmdBuild(ctx context.Context, args []string) error {
 	}
 	if *notifyWhenDone {
 		notify("greybeard — graph rebuilt", summary)
+	}
+	return nil
+}
+
+func cmdClean(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("clean", flag.ExitOnError)
+	all := fs.Bool("all", false, "also unregister every repo (full reset)")
+	fs.Parse(args)
+	st, err := graph.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	res, err := st.Clean(ctx, *all)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s %s edges and %s nodes forgotten\n",
+		grey("🧔"), bold(fmt.Sprint(res.EdgesRemoved)), bold(fmt.Sprint(res.NodesRemoved)))
+	if *all {
+		fmt.Printf("%s repos unregistered — run %s to start over\n",
+			bold(fmt.Sprint(res.ReposRemoved)), bold("greybeard init --root <path>"))
+	} else {
+		fmt.Printf("%s repos still registered — run %s to relearn\n",
+			bold(fmt.Sprint(res.ReposKept)), bold("greybeard build"))
 	}
 	return nil
 }
@@ -223,6 +257,7 @@ func cmdCheck(ctx context.Context, args []string) error {
 	}
 	c := exec.Command(exe, "reindex", "--cwd", repo.LocalPath)
 	c.Stdout, c.Stderr = nil, nil
+	detach(c)
 	_ = c.Start() // deliberately not Wait()ed — check returns immediately
 	return nil
 }
