@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/deepaksinghcs14/greybeard/internal/spawn"
 )
 
 const releaseRepo = "deepaksinghcs14/greybeard"
@@ -164,6 +166,6 @@ func maybeAutoUpdate() {
 	}
 	c := exec.Command(exe, "update", "--quiet")
 	c.Stdout, c.Stderr = nil, nil
-	detach(c)
+	spawn.Detach(c)
 	_ = c.Start() // detached, same pattern as background reindex
 }

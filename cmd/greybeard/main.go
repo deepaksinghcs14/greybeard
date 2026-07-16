@@ -13,6 +13,7 @@ import (
 	"github.com/deepaksinghcs14/greybeard/internal/discover"
 	"github.com/deepaksinghcs14/greybeard/internal/graph"
 	"github.com/deepaksinghcs14/greybeard/internal/mcp"
+	"github.com/deepaksinghcs14/greybeard/internal/spawn"
 )
 
 // version is stamped by goreleaser via -ldflags "-X main.version=..." on
@@ -119,7 +120,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 		}
 		c := exec.Command(exe, "build", "--notify")
 		c.Stdout, c.Stderr = nil, nil
-		detach(c)
+		spawn.Detach(c)
 		if err := c.Start(); err != nil {
 			return err
 		}
@@ -257,7 +258,7 @@ func cmdCheck(ctx context.Context, args []string) error {
 	}
 	c := exec.Command(exe, "reindex", "--cwd", repo.LocalPath)
 	c.Stdout, c.Stderr = nil, nil
-	detach(c)
+	spawn.Detach(c)
 	_ = c.Start() // deliberately not Wait()ed — check returns immediately
 	return nil
 }

@@ -5,15 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/deepaksinghcs14/greybeard/internal/discover"
 	"github.com/deepaksinghcs14/greybeard/internal/graph"
+	"github.com/deepaksinghcs14/greybeard/internal/spawn"
 )
 
 // RepoDiscoveryResult is what init_root returns.
@@ -120,6 +125,37 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 			graph.BuildResult
 			ProgressLog []string `json:"progress_log"`
 		}{res, log}, nil)
+	})
+
+	s.AddTool(mcp.NewTool("visualize_graph",
+		mcp.WithDescription("Open the interactive cross-repo graph in the user's browser (force-directed, zoom/pan, click nodes for details). Starts a local server on 127.0.0.1 if one isn't already running and returns the URL — relay it to the user."),
+		mcp.WithNumber("port", mcp.Description("Port for the local page, default 7333")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		port := req.GetInt("port", 7333)
+		url := fmt.Sprintf("http://127.0.0.1:%d", port)
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		if conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond); err == nil {
+			conn.Close() // already serving (or the port is taken — the URL will tell)
+			return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "already running"}`, url)), nil
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		c := exec.Command(exe, "visualize", "--port", strconv.Itoa(port))
+		c.Stdout, c.Stderr = nil, nil
+		spawn.Detach(c) // outlives this MCP server; user closes it from the terminal or it dies with logout
+		if err := c.Start(); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		for i := 0; i < 20; i++ { // wait for the listener, max ~2s
+			if conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
+				conn.Close()
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "started", "note": "opened in the default browser; page reloads reflect the live graph"}`, url)), nil
 	})
 
 	s.AddTool(mcp.NewTool("audit_graph",

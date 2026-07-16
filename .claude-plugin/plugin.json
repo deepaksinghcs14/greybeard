@@ -12,6 +12,7 @@
     "./commands/greybeard-init.md",
     "./commands/greybeard-build.md",
     "./commands/greybeard-query.md",
-    "./commands/greybeard-audit.md"
+    "./commands/greybeard-audit.md",
+    "./commands/greybeard-visualize.md"
   ]
 }

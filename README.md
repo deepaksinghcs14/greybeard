@@ -143,7 +143,8 @@ copy lives in `~/go/bin` — remove that one too if you made one.
 | `/greybeard-build` | Full extraction, per-repo progress relayed in chat |
 | `/greybeard-query` | Ask the graph anything, in plain language |
 | `/greybeard-audit` | What's empty, what's stale — changes nothing |
-| `greybeard visualize` | Interactive force-directed graph in your browser |
+| `/greybeard-visualize` | Open the interactive graph in your browser, from chat |
+| `greybeard visualize` | Same, from the terminal (`--port`, default 7333) |
 | `greybeard build --background` | Detached build, desktop notification when done |
 | `greybeard clean [--all]` | Forget extracted relations (`--all`: everything) |
 | `greybeard update` | Self-update — also runs daily in the background |

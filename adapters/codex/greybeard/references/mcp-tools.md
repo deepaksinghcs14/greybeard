@@ -55,9 +55,11 @@ record_relation(from: string, to: string, edge_type: string,
 // survive rebuilds.
 \`\`\`
 
-## init_root / build_graph / audit_graph
+## init_root / build_graph / audit_graph / visualize_graph
 
-These back the CLI/slash commands, not agent-facing reasoning queries — see the Go implementation spec below for their shapes.
+These back the CLI/slash commands, not agent-facing reasoning queries.
+`visualize_graph` starts (or finds) the local interactive graph page and
+returns its URL — relay it to the user.
 
 ## Query cost note
 
