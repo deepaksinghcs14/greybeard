@@ -1,0 +1,311 @@
+package graph
+
+import (
+	"context"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/deepaksinghcs14/greybeard/internal/discover"
+	"github.com/deepaksinghcs14/greybeard/internal/extract"
+)
+
+// BuildResult summarizes a full graph rebuild.
+type BuildResult struct {
+	ReposProcessed int           `json:"repos_processed"`
+	Nodes          int           `json:"nodes"`
+	Edges          int           `json:"edges"`
+	Failed         []RepoFailure `json:"failed,omitempty"`
+}
+
+// RepoFailure is a repo whose extraction was skipped or partial, with the reason.
+type RepoFailure struct {
+	Repo   string `json:"repo"`
+	Reason string `json:"reason"`
+}
+
+// declared is one repo's extracted surface, held in memory during a build.
+type declared struct {
+	rec RepoRecord
+	ex  extract.Extraction
+}
+
+// BuildAll re-extracts every registered repo and fully rebuilds all extracted
+// nodes and edges (repo registration survives).
+func (s *Store) BuildAll(ctx context.Context) (BuildResult, error) {
+	var res BuildResult
+	repos, err := s.ListRepos(ctx)
+	if err != nil {
+		return res, err
+	}
+
+	// Extract everything first — cross-referencing needs all repos' surfaces.
+	var all []declared
+	for _, r := range repos {
+		if _, err := os.Stat(r.LocalPath); err != nil {
+			res.Failed = append(res.Failed, RepoFailure{Repo: r.Name, Reason: "local path missing: " + r.LocalPath})
+			continue
+		}
+		ex := extract.Repo(r.LocalPath)
+		for _, e := range ex.Errors {
+			res.Failed = append(res.Failed, RepoFailure{Repo: r.Name, Reason: e})
+		}
+		all = append(all, declared{rec: r, ex: ex})
+	}
+
+	// Full rebuild: drop all extracted rows.
+	for _, table := range []string{"endpoints", "schemas", "packages", "edges"} {
+		if _, err := s.db.ExecContext(ctx, "DELETE FROM "+table); err != nil {
+			return res, err
+		}
+	}
+
+	now := time.Now()
+	for _, d := range all {
+		n, err := s.createDeclared(ctx, d)
+		if err != nil {
+			return res, err
+		}
+		res.Nodes += n.nodes
+		res.Edges += n.edges
+		if err := s.SetIndexed(ctx, d.rec.Identity, now, d.ex.Modules); err != nil {
+			return res, err
+		}
+	}
+	for _, d := range all {
+		n, err := s.crossRef(ctx, d, others(all, d.rec.Identity))
+		if err != nil {
+			return res, err
+		}
+		res.Nodes += n.nodes
+		res.Edges += n.edges
+	}
+	res.ReposProcessed = len(all)
+	return res, nil
+}
+
+// Reindex re-extracts a single repo (used by the session-start hook).
+// ponytail: refreshes this repo's declared rows and OUTGOING edges only;
+// stale inbound edges (other repos calling endpoints this repo deleted) and
+// removed declared rows are reconciled by the next full `greybeard build`.
+func (s *Store) Reindex(ctx context.Context, repo discover.Repo) error {
+	if err := s.UpsertRepo(ctx, repo); err != nil {
+		return err
+	}
+	ex := extract.Repo(repo.LocalPath)
+
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM edges WHERE from_repo = ?`, repo.Identity); err != nil {
+		return err
+	}
+
+	rec, err := s.GetRepo(ctx, repo.Identity)
+	if err != nil {
+		return err
+	}
+	d := declared{rec: *rec, ex: ex}
+	if _, err := s.createDeclared(ctx, d); err != nil {
+		return err
+	}
+
+	// Other repos' surfaces come from the store (declared at their last
+	// index), not from re-extracting them.
+	repos, err := s.ListRepos(ctx)
+	if err != nil {
+		return err
+	}
+	var rest []declared
+	for _, r := range repos {
+		if r.Identity == repo.Identity {
+			continue
+		}
+		o := declared{rec: r, ex: extract.Extraction{Modules: r.Modules}}
+		if o.ex.Endpoints, err = s.endpointsOf(ctx, r.Identity); err != nil {
+			return err
+		}
+		if o.ex.Tables, err = s.schemasOf(ctx, r.Identity); err != nil {
+			return err
+		}
+		rest = append(rest, o)
+	}
+	if _, err := s.crossRef(ctx, d, rest); err != nil {
+		return err
+	}
+	return s.SetIndexed(ctx, repo.Identity, time.Now(), ex.Modules)
+}
+
+func others(all []declared, identity string) []declared {
+	var out []declared
+	for _, d := range all {
+		if d.rec.Identity != identity {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+type counts struct{ nodes, edges int }
+
+// insert runs an INSERT OR IGNORE and reports whether a row was added.
+func (s *Store) insert(ctx context.Context, query string, args ...any) (bool, error) {
+	r, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := r.RowsAffected()
+	return n > 0, nil
+}
+
+// createDeclared writes a repo's own surface: endpoints, schemas (tables and
+// proto messages), and the owner's shares_schema(write) edge.
+func (s *Store) createDeclared(ctx context.Context, d declared) (counts, error) {
+	var c counts
+	id := d.rec.Identity
+	for _, ep := range d.ex.Endpoints {
+		ok, err := s.insert(ctx, `INSERT OR IGNORE INTO endpoints (repo, method, path) VALUES (?, ?, ?)`,
+			id, ep.Method, ep.Path)
+		if err != nil {
+			return c, err
+		}
+		if ok {
+			c.nodes++
+		}
+	}
+	for _, name := range append(append([]string{}, d.ex.Tables...), d.ex.Messages...) {
+		ok, err := s.insert(ctx, `INSERT OR IGNORE INTO schemas (repo, name) VALUES (?, ?)`, id, name)
+		if err != nil {
+			return c, err
+		}
+		if ok {
+			c.nodes++
+		}
+		ok, err = s.insert(ctx, `INSERT OR IGNORE INTO edges (from_repo, edge_type, to_repo, detail, access_mode)
+			VALUES (?, 'shares_schema', ?, ?, 'write')`, id, id, name)
+		if err != nil {
+			return c, err
+		}
+		if ok {
+			c.edges++
+		}
+	}
+	return c, nil
+}
+
+// crossRef scans repo d's sources against every other repo's declared surface
+// and writes imports / calls_api / shares_schema edges.
+func (s *Store) crossRef(ctx context.Context, d declared, rest []declared) (counts, error) {
+	var c counts
+	if _, err := os.Stat(d.rec.LocalPath); err != nil {
+		return c, nil // nothing to scan
+	}
+
+	type epOwner struct{ owner, method string }
+	pathOwners := map[string][]epOwner{} // endpoint path -> declaring repos
+	wordOwners := map[string][]string{}  // schema/message name -> declaring repos
+	for _, o := range rest {
+		for _, ep := range o.ex.Endpoints {
+			pathOwners[ep.Path] = append(pathOwners[ep.Path], epOwner{owner: o.rec.Identity, method: ep.Method})
+		}
+		for _, t := range append(append([]string{}, o.ex.Tables...), o.ex.Messages...) {
+			wordOwners[t] = append(wordOwners[t], o.rec.Identity)
+		}
+	}
+
+	// imports: this repo's declared deps vs other repos' module paths.
+	for _, dep := range d.ex.Deps {
+		for _, o := range rest {
+			for _, mod := range o.ex.Modules {
+				if mod == "" || (dep != mod && !strings.HasPrefix(dep, mod+"/")) {
+					continue
+				}
+				ok, err := s.insert(ctx, `INSERT OR IGNORE INTO packages (repo, import_path) VALUES (?, ?)`,
+					o.rec.Identity, dep)
+				if err != nil {
+					return c, err
+				}
+				if ok {
+					c.nodes++
+				}
+				ok, err = s.insert(ctx, `INSERT OR IGNORE INTO edges (from_repo, edge_type, to_repo, detail)
+					VALUES (?, 'imports', ?, ?)`, d.rec.Identity, o.rec.Identity, dep)
+				if err != nil {
+					return c, err
+				}
+				if ok {
+					c.edges++
+				}
+			}
+		}
+	}
+
+	var paths, words []string
+	for p := range pathOwners {
+		paths = append(paths, p)
+	}
+	for w := range wordOwners {
+		words = append(words, w)
+	}
+	pathHits, wordHits := extract.ScanRefs(d.rec.LocalPath, paths, words)
+
+	for p := range pathHits {
+		for _, eo := range pathOwners[p] {
+			ok, err := s.insert(ctx, `INSERT OR IGNORE INTO edges (from_repo, edge_type, to_repo, detail, method, path)
+				VALUES (?, 'calls_api', ?, ?, ?, ?)`,
+				d.rec.Identity, eo.owner, eo.method+" "+p, eo.method, p)
+			if err != nil {
+				return c, err
+			}
+			if ok {
+				c.edges++
+			}
+		}
+	}
+	for w := range wordHits {
+		for _, owner := range wordOwners[w] {
+			ok, err := s.insert(ctx, `INSERT OR IGNORE INTO edges (from_repo, edge_type, to_repo, detail, access_mode)
+				VALUES (?, 'shares_schema', ?, ?, 'read')`, d.rec.Identity, owner, w)
+			if err != nil {
+				return c, err
+			}
+			if ok {
+				c.edges++
+			}
+		}
+	}
+	return c, nil
+}
+
+// endpointsOf / schemasOf read a repo's declared surface back out of the
+// store (used by single-repo reindex instead of re-extracting every repo).
+func (s *Store) endpointsOf(ctx context.Context, identity string) ([]extract.Endpoint, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT method, path FROM endpoints WHERE repo = ?`, identity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var eps []extract.Endpoint
+	for rows.Next() {
+		var ep extract.Endpoint
+		if err := rows.Scan(&ep.Method, &ep.Path); err != nil {
+			return nil, err
+		}
+		eps = append(eps, ep)
+	}
+	return eps, rows.Err()
+}
+
+func (s *Store) schemasOf(ctx context.Context, identity string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM schemas WHERE repo = ?`, identity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	return names, rows.Err()
+}
