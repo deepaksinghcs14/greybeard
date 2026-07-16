@@ -7,13 +7,13 @@
 | Repo      | remote_url, local_path, last_indexed_at | git discovery                       |
 | Endpoint  | path, method, repo                   | OpenAPI specs, proto files             |
 | Schema    | name, repo                           | migration files, proto messages        |
-| Package   | import_path, repo                    | go.mod / package.json                  |
+| Package   | import_path, repo                    | go.mod, package.json, requirements.txt/pyproject.toml, Cargo.toml, composer.json, Gemfile/gemspec, pom.xml/build.gradle, .csproj |
 
 ## Edges
 
 | Type           | From -> To          | Meaning                                   | Source                          |
 |----------------|---------------------|--------------------------------------------|----------------------------------|
-| imports        | Repo -> Package     | compile-time dependency                    | go.mod / package.json diff       |
+| imports        | Repo -> Package     | compile-time dependency                    | manifest diff (go.mod, package.json, requirements.txt/pyproject.toml, Cargo.toml, composer.json, Gemfile/gemspec, pom.xml/build.gradle, .csproj) |
 | calls_api      | Repo -> Endpoint    | runtime HTTP/gRPC call                     | OpenAPI/proto cross-refs, code scan |
 | shares_schema  | Repo -> Schema      | reads or writes a shared data model        | migration/proto parsing          |
 | depends_on     | Repo -> Repo        | rolled-up summary edge (any of the above)  | derived, recomputed each build   |

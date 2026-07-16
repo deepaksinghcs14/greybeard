@@ -44,7 +44,7 @@ With greybeard:
 ## How it works
 
 ```
-1. Extract   what repos declare: go.mod/package.json, OpenAPI, protos, SQL migrations
+1. Extract   what repos declare: go.mod, package.json, requirements.txt/pyproject.toml, Cargo.toml, composer.json, Gemfile, pom.xml/build.gradle, .csproj, OpenAPI, protos, SQL migrations
 2. Store     a typed graph in one SQLite file (~/.greybeard/graph.db)
 3. Serve     three MCP queries: what's related · who calls this · who reads this schema
 4. Learn     agents record relationships they verify in code, with file:line evidence
