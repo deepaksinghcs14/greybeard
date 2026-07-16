@@ -14,6 +14,7 @@ type RepoRelation struct {
 	EdgeType string `json:"edge_type"` // imports | calls_api | shares_schema
 	Detail   string `json:"detail"`
 	Hops     int    `json:"hops"`
+	Source   string `json:"source"` // scanned (extraction) | agent (verified observation)
 }
 
 // Caller is a repo that calls or imports a target.
@@ -21,6 +22,7 @@ type Caller struct {
 	Repo     string `json:"repo"`
 	EdgeType string `json:"edge_type"`
 	Detail   string `json:"detail"`
+	Source   string `json:"source"`
 }
 
 // SchemaDependent is a repo that reads or writes a schema.
@@ -68,7 +70,7 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 		for _, f := range frontier {
 			args = append(args, f)
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail FROM depends_on
+		rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail, source FROM depends_on
 			WHERE from_repo IN (`+placeholders+`) OR to_repo IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return nil, err
@@ -79,8 +81,8 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 		}
 		var next []string
 		for rows.Next() {
-			var from, to, edgeType, detail string
-			if err := rows.Scan(&from, &to, &edgeType, &detail); err != nil {
+			var from, to, edgeType, detail, source string
+			if err := rows.Scan(&from, &to, &edgeType, &detail, &source); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -94,7 +96,7 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 			key := other + "|" + edgeType + "|" + detail
 			if !seen[key] {
 				seen[key] = true
-				out = append(out, RepoRelation{Repo: names[other], EdgeType: edgeType, Detail: detail, Hops: hop})
+				out = append(out, RepoRelation{Repo: names[other], EdgeType: edgeType, Detail: detail, Hops: hop, Source: source})
 			}
 			next = append(next, other)
 		}
@@ -126,7 +128,7 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 		method, path = strings.ToUpper(m), strings.TrimSpace(p)
 	}
 
-	q := `SELECT r.name, e.detail FROM edges e JOIN repos r ON r.identity = e.from_repo
+	q := `SELECT r.name, e.detail, e.source FROM edges e JOIN repos r ON r.identity = e.from_repo
 		WHERE e.edge_type = 'calls_api' AND e.path = ?`
 	args := []any{path}
 	if method != "" {
@@ -140,7 +142,7 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 
 	// imports: exact package match or a subpackage of the target.
 	err := s.collectCallers(ctx, &out, "imports",
-		`SELECT r.name, e.detail FROM edges e JOIN repos r ON r.identity = e.from_repo
+		`SELECT r.name, e.detail, e.source FROM edges e JOIN repos r ON r.identity = e.from_repo
 		 WHERE e.edge_type = 'imports' AND (e.detail = ?1 OR e.detail LIKE ?1 || '/%')`, target)
 	if err != nil {
 		return nil, err
@@ -157,11 +159,11 @@ func (s *Store) collectCallers(ctx context.Context, out *[]Caller, edgeType, que
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name, detail string
-		if err := rows.Scan(&name, &detail); err != nil {
+		var name, detail, source string
+		if err := rows.Scan(&name, &detail, &source); err != nil {
 			return err
 		}
-		*out = append(*out, Caller{Repo: name, EdgeType: edgeType, Detail: detail})
+		*out = append(*out, Caller{Repo: name, EdgeType: edgeType, Detail: detail, Source: source})
 	}
 	return rows.Err()
 }

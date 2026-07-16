@@ -179,6 +179,33 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("callers after reindex = %+v", callers)
 	}
 
+	// --- agent-recorded edges: provenance carried, rebuilds preserve them --------
+	if err := st.RecordRelation(ctx, "billing-svc", "orders-svc", "calls_api",
+		"DELETE /orders/{id}", "", "billing/cancel.go:42 — url built from cfg.OrdersBase"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordRelation(ctx, "billing-svc", "orders-svc", "calls_api",
+		"POST /x", "", ""); err == nil {
+		t.Error("recording without evidence must be rejected")
+	}
+	callers, err = st.GetCallersOf(ctx, "DELETE /orders/{id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || callers[0].Source != "agent" {
+		t.Errorf("agent edge = %+v, want source=agent", callers)
+	}
+	if _, err := st.BuildAll(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	callers, err = st.GetCallersOf(ctx, "DELETE /orders/{id}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 {
+		t.Errorf("agent edge must survive a rebuild, got %+v", callers)
+	}
+
 	// --- clean: relations gone, registrations kept, everything stale -------------
 	cres, err := st.Clean(ctx, false)
 	if err != nil {

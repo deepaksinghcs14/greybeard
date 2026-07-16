@@ -42,6 +42,19 @@ SchemaDependent {
 }
 ```
 
+## record_relation
+
+\`\`\`
+record_relation(from: string, to: string, edge_type: string,
+                detail: string, access_mode?: string, evidence: string)
+
+// Store a cross-repo relationship you verified in code that extraction
+// can't see. edge_type: "imports" | "calls_api" | "shares_schema".
+// detail: import path, "POST /orders", or table name. evidence: file:line
+// and/or snippet — required. Recorded edges carry source="agent" and
+// survive rebuilds.
+\`\`\`
+
 ## init_root / build_graph / audit_graph
 
 These back the CLI/slash commands, not agent-facing reasoning queries — see the Go implementation spec below for their shapes.

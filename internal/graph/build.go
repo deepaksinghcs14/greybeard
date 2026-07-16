@@ -154,7 +154,9 @@ func (s *Store) BuildAll(ctx context.Context, progress func(string)) (BuildResul
 			`DELETE FROM endpoints WHERE repo = ?`,
 			`DELETE FROM schemas WHERE repo = ?`,
 			`DELETE FROM packages WHERE repo = ?`,
-			`DELETE FROM edges WHERE from_repo = ?`,
+			// agent-observed edges survive rebuilds — the scanner can't
+			// re-derive them, only `greybeard clean` forgets them
+			`DELETE FROM edges WHERE from_repo = ? AND source = 'scanned'`,
 		} {
 			if _, err := tx.ExecContext(ctx, del, id); err != nil {
 				return res, err
@@ -229,7 +231,8 @@ func (s *Store) Reindex(ctx context.Context, repo discover.Repo) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM edges WHERE from_repo = ?`, repo.Identity); err != nil {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM edges WHERE from_repo = ? AND source = 'scanned'`, repo.Identity); err != nil {
 		return err
 	}
 	if _, err := createDeclared(ctx, tx, d); err != nil {

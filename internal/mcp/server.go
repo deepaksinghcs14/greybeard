@@ -60,6 +60,24 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		return asJSON(st.GetSchemaDependents(ctx, schema))
 	})
 
+	s.AddTool(mcp.NewTool("record_relation",
+		mcp.WithDescription("Record a cross-repo relationship you VERIFIED in code that extraction can't see (URL built from config, ORM table access). Requires evidence (file:line or snippet). Never record guesses — a false edge poisons every future blast-radius answer."),
+		mcp.WithString("from", mcp.Required(), mcp.Description("Repo that depends/calls/reads (short name or identity)")),
+		mcp.WithString("to", mcp.Required(), mcp.Description("Repo that owns the target (short name or identity)")),
+		mcp.WithString("edge_type", mcp.Required(), mcp.Description("imports | calls_api | shares_schema")),
+		mcp.WithString("detail", mcp.Required(), mcp.Description("What exactly: import path, \"POST /orders\", or table name")),
+		mcp.WithString("access_mode", mcp.Description("shares_schema only: read | write | read_write (default read)")),
+		mcp.WithString("evidence", mcp.Required(), mcp.Description("Where you saw it: file:line and/or the code snippet")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		get := func(k string) string { return req.GetString(k, "") }
+		err := st.RecordRelation(ctx, get("from"), get("to"), get("edge_type"),
+			get("detail"), get("access_mode"), get("evidence"))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(`{"recorded": true, "source": "agent"}`), nil
+	})
+
 	s.AddTool(mcp.NewTool("init_root",
 		mcp.WithDescription("Walk a directory tree for git repos and register each in the graph. Run greybeard build (or build_graph) afterwards for the first extraction."),
 		mcp.WithString("path", mcp.Required(), mcp.Description("Root folder to scan, e.g. ~/code")),
