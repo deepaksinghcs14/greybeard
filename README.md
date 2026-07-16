@@ -44,7 +44,7 @@ With greybeard:
 ## How it works
 
 ```
-1. Extract   what repos declare: go.mod/package.json, OpenAPI, protos, SQL migrations
+1. Extract   what repos declare: go.mod, package.json, requirements.txt/pyproject.toml, Cargo.toml, composer.json, Gemfile, pom.xml/build.gradle, .csproj, OpenAPI, protos, SQL migrations
 2. Store     a typed graph in one SQLite file (~/.greybeard/graph.db)
 3. Serve     three MCP queries: what's related · who calls this · who reads this schema
 4. Learn     agents record relationships they verify in code, with file:line evidence
@@ -52,11 +52,12 @@ With greybeard:
 
 Every edge carries its type — `imports` (declared, hard fact) ›
 `calls_api` (matched in quoted strings) › `shares_schema` (matched in SQL
-context) — and its provenance (`scanned` vs `agent`), so the agent knows how
-hard each constraint is. Below the evidence bar nothing enters the graph:
-names a repo declares itself resolve locally, `/health` never links anything,
-and a `users` table only links repos that already share a harder edge. Same
-name is not same thing. Node/edge model:
+context) › `calls_symbol` (matched exported function/type/class name) — and
+its provenance (`scanned` vs `agent`), so the agent knows how hard each
+constraint is. Below the evidence bar nothing enters the graph: names a repo
+declares itself resolve locally, `/health` never links anything, and a
+`users` table (or a generic symbol like `Config`) only links repos that
+already share a harder edge. Same name is not same thing. Node/edge model:
 [graph-schema.md](skills/greybeard/references/graph-schema.md).
 
 A session-start hook keeps the current repo's data fresh (and the binary
@@ -147,6 +148,7 @@ copy lives in `~/go/bin` — remove that one too if you made one.
 | `greybeard visualize` | Same, from the terminal (`--port`, default 7333) |
 | `greybeard build --background` | Detached build, desktop notification when done |
 | `greybeard clean [--all]` | Forget extracted relations (`--all`: everything) |
+| `greybeard audit` | Same as `/greybeard-audit`, from the terminal — no agent needed |
 | `greybeard update` | Self-update — also runs daily in the background |
 
 The agent-facing queries (`get_related_repos`, `get_callers_of`,

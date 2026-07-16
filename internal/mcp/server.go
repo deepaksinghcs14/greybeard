@@ -27,12 +27,55 @@ type RepoDiscoveryResult struct {
 	Repos      []string `json:"repos"`
 }
 
+// queryResponse wraps a graph query's results with a caveat about extraction
+// gaps: Results empty and Caveat empty means "confirmed, no known ties."
+// Results empty and Caveat set means "don't conclude that — part of the
+// graph this query touches hasn't been extracted yet."
+type queryResponse[T any] struct {
+	Results []T    `json:"results"`
+	Caveat  string `json:"caveat,omitempty"`
+}
+
+func newQueryResponse[T any](results []T, caveat string) queryResponse[T] {
+	if results == nil {
+		results = []T{} // nil marshals as null; the query tools have always promised []
+	}
+	return queryResponse[T]{Results: results, Caveat: caveat}
+}
+
+// repoFreshnessCaveat checks the one repo a get_related_repos call is
+// anchored on — cheap, since the identity is already in hand.
+func repoFreshnessCaveat(ctx context.Context, st *graph.Store, repo string) string {
+	rec, err := st.GetRepo(ctx, repo)
+	if err != nil || rec == nil {
+		return ""
+	}
+	if rec.LastIndexedAt == "" {
+		return fmt.Sprintf("%s has never been extracted — an empty result does not mean it has no dependencies, only that nothing is known yet. Run build_graph.", rec.Name)
+	}
+	if rec.Stale(graph.StaleAfter()) {
+		return fmt.Sprintf("%s's extracted data is stale (last indexed %s) — results may miss recent changes. Consider running build_graph.", rec.Name, rec.LastIndexedAt)
+	}
+	return ""
+}
+
+// graphGapsCaveat is for queries with no single anchor repo (get_callers_of,
+// get_schema_dependents match against strings, not a specific repo) — flags
+// when the graph overall has gaps that could explain an empty result.
+func graphGapsCaveat(ctx context.Context, st *graph.Store) string {
+	n, err := st.StaleOrUnindexedCount(ctx, graph.StaleAfter())
+	if err != nil || n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d registered repo(s) are stale or have never been extracted — an empty result may reflect that gap rather than confirmed absence. Run audit_graph to see which.", n)
+}
+
 // Serve runs the MCP server over stdio until the client disconnects.
 func Serve(ctx context.Context, st *graph.Store, version string) error {
 	s := server.NewMCPServer("greybeard", version)
 
 	s.AddTool(mcp.NewTool("get_related_repos",
-		mcp.WithDescription("Repos connected to the given repo via imports, calls_api, or shares_schema edges, up to max_hops away. Empty result = no known cross-repo ties."),
+		mcp.WithDescription("Repos connected to the given repo via imports, calls_api, shares_schema, or calls_symbol edges, up to max_hops away. Empty result usually means no known cross-repo ties — but check the caveat field first: if the queried repo hasn't been extracted yet, empty means unknown, not confirmed absent."),
 		mcp.WithString("repo", mcp.Required(), mcp.Description("Repo short name (e.g. \"orders-svc\") or identity (e.g. \"github.com/acme/orders-svc\")")),
 		mcp.WithNumber("max_hops", mcp.Description("Blast-radius width, default 1. Beyond 2-3 gets slow on dense graphs.")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -40,37 +83,49 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return asJSON(st.GetRelatedRepos(ctx, repo, req.GetInt("max_hops", 1)))
+		rels, err := st.GetRelatedRepos(ctx, repo, req.GetInt("max_hops", 1))
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return asJSON(newQueryResponse(rels, repoFreshnessCaveat(ctx, st, repo)), nil)
 	})
 
 	s.AddTool(mcp.NewTool("get_callers_of",
-		mcp.WithDescription("Reverse lookup: repos that call an endpoint (\"POST /orders\", \"/orders\", \"OrderService/Create\") or import a package path. Every result carries its edge_type."),
+		mcp.WithDescription("Reverse lookup: repos that call an endpoint (\"POST /orders\", \"/orders\", \"OrderService/Create\"), import a package path, or reference an exported symbol. Every result carries its edge_type. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
 		mcp.WithString("target", mcp.Required(), mcp.Description("Endpoint (optionally method-prefixed), exported symbol, or package path")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		target, err := req.RequireString("target")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return asJSON(st.GetCallersOf(ctx, target))
+		callers, err := st.GetCallersOf(ctx, target)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return asJSON(newQueryResponse(callers, graphGapsCaveat(ctx, st)), nil)
 	})
 
 	s.AddTool(mcp.NewTool("get_schema_dependents",
-		mcp.WithDescription("Repos that read/write a shared schema (table or proto message) by name, with access_mode read|write|read_write."),
+		mcp.WithDescription("Repos that read/write a shared schema (table or proto message) by name, with access_mode read|write|read_write. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
 		mcp.WithString("schema", mcp.Required(), mcp.Description("Table or message name, e.g. \"orders\"")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		schema, err := req.RequireString("schema")
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		return asJSON(st.GetSchemaDependents(ctx, schema))
+		deps, err := st.GetSchemaDependents(ctx, schema)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return asJSON(newQueryResponse(deps, graphGapsCaveat(ctx, st)), nil)
 	})
 
 	s.AddTool(mcp.NewTool("record_relation",
 		mcp.WithDescription("Record a cross-repo relationship you VERIFIED in code that extraction can't see (URL built from config, ORM table access). Requires evidence (file:line or snippet). Never record guesses — a false edge poisons every future blast-radius answer."),
 		mcp.WithString("from", mcp.Required(), mcp.Description("Repo that depends/calls/reads (short name or identity)")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Repo that owns the target (short name or identity)")),
-		mcp.WithString("edge_type", mcp.Required(), mcp.Description("imports | calls_api | shares_schema")),
-		mcp.WithString("detail", mcp.Required(), mcp.Description("What exactly: import path, \"POST /orders\", or table name")),
+		mcp.WithString("edge_type", mcp.Required(), mcp.Description("imports | calls_api | shares_schema | calls_symbol")),
+		mcp.WithString("detail", mcp.Required(), mcp.Description("What exactly: import path, \"POST /orders\", table name, or exported symbol name")),
 		mcp.WithString("access_mode", mcp.Description("shares_schema only: read | write | read_write (default read)")),
 		mcp.WithString("evidence", mcp.Required(), mcp.Description("Where you saw it: file:line and/or the code snippet")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

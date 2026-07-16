@@ -195,6 +195,45 @@ func TestEndToEnd(t *testing.T) {
 	if len(callers) != 1 || callers[0].Source != "agent" {
 		t.Errorf("agent edge = %+v, want source=agent", callers)
 	}
+	if callers[0].Evidence != "billing/cancel.go:42 — url built from cfg.OrdersBase" {
+		t.Errorf("agent edge evidence = %q, want the recorded citation", callers[0].Evidence)
+	}
+
+	// evidence must also surface through get_related_repos and the
+	// visualize snapshot, not just get_callers_of — record_relation's
+	// evidence was write-only until this was fixed.
+	rels, err = st.GetRelatedRepos(ctx, "billing-svc", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEvidence := false
+	for _, r := range rels {
+		if r.EdgeType == "calls_api" && r.Detail == "DELETE /orders/{id}" {
+			if r.Evidence == "" {
+				t.Errorf("get_related_repos dropped evidence for %+v", r)
+			}
+			foundEvidence = true
+		}
+	}
+	if !foundEvidence {
+		t.Fatal("expected the agent-recorded edge in get_related_repos")
+	}
+	snap, err := st.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEvidence = false
+	for _, e := range snap.Edges {
+		if e.EdgeType == "calls_api" && e.Detail == "DELETE /orders/{id}" {
+			if e.Source != "agent" || e.Evidence == "" {
+				t.Errorf("visualize snapshot dropped source/evidence for %+v", e)
+			}
+			foundEvidence = true
+		}
+	}
+	if !foundEvidence {
+		t.Fatal("expected the agent-recorded edge in the visualize snapshot")
+	}
 	if _, err := st.BuildAll(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -239,5 +278,79 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if len(remaining) != 0 {
 		t.Errorf("repos after clean --all: %+v", remaining)
+	}
+}
+
+// TestSymbolCallers exercises get_callers_of's calls_symbol path end to end:
+// a real extraction (declared symbol regex) feeding a real cross-repo scan
+// (word-boundary match, corroborated via an existing imports edge) feeding a
+// real query — the exact chain that answers "who calls this exported thing."
+func TestSymbolCallers(t *testing.T) {
+	t.Setenv("GREYBEARD_DB", filepath.Join(t.TempDir(), "graph.db"))
+	ctx := context.Background()
+	st, err := graph.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	root := t.TempDir()
+	libDir := filepath.Join(root, "config-lib")
+	callerDir := filepath.Join(root, "caller-svc")
+	for _, dir := range []string{libDir, callerDir} {
+		if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(libDir, ".git", "config"),
+		[]byte("[remote \"origin\"]\n\turl = https://github.com/acme/config-lib.git\n"), 0o644)
+	os.WriteFile(filepath.Join(callerDir, ".git", "config"),
+		[]byte("[remote \"origin\"]\n\turl = https://github.com/acme/caller-svc.git\n"), 0o644)
+
+	os.WriteFile(filepath.Join(libDir, "go.mod"), []byte("module github.com/acme/config-lib\n\ngo 1.22\n"), 0o644)
+	os.WriteFile(filepath.Join(libDir, "config.go"),
+		[]byte("package config\n\nfunc ParseConfig() {}\n"), 0o644)
+
+	os.WriteFile(filepath.Join(callerDir, "go.mod"),
+		[]byte("module github.com/acme/caller-svc\n\ngo 1.22\n\nrequire github.com/acme/config-lib v0.0.0\n"), 0o644)
+	os.WriteFile(filepath.Join(callerDir, "main.go"),
+		[]byte("package main\n\nfunc main() { ParseConfig() }\n"), 0o644)
+
+	repos, err := discover.ScanRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range repos {
+		if err := st.UpsertRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.BuildAll(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	callers, err := st.GetCallersOf(ctx, "ParseConfig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || callers[0].Repo != "caller-svc" || callers[0].EdgeType != "calls_symbol" {
+		t.Errorf("get_callers_of(ParseConfig) = %+v, want one calls_symbol edge from caller-svc", callers)
+	}
+	if callers[0].Source != "scanned" {
+		t.Errorf("scanned symbol edge should carry source=scanned, got %+v", callers[0])
+	}
+
+	// record_relation for calls_symbol: makes an undeclared symbol queryable
+	// too, same as it already does for calls_api/shares_schema.
+	if err := st.RecordRelation(ctx, "caller-svc", "config-lib", "calls_symbol",
+		"LoadDefaults", "", "main.go:12 — dynamically resolved, extractor can't see it"); err != nil {
+		t.Fatal(err)
+	}
+	callers, err = st.GetCallersOf(ctx, "LoadDefaults")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(callers) != 1 || callers[0].Source != "agent" || callers[0].Evidence == "" {
+		t.Errorf("agent-recorded symbol edge = %+v, want source=agent with evidence", callers)
 	}
 }

@@ -41,12 +41,16 @@ type refPlan struct {
 	imports []importRef
 	calls   []callRef
 	schemas []schemaRef
+	symbols []symbolRef
 }
 type importRef struct{ owner, dep string }
 type callRef struct{ owner, method, path string }
 type schemaRef struct{ owner, name, mode string }
+type symbolRef struct{ owner, name string }
 
-func (p refPlan) count() int { return len(p.imports) + len(p.calls) + len(p.schemas) }
+func (p refPlan) count() int {
+	return len(p.imports) + len(p.calls) + len(p.schemas) + len(p.symbols)
+}
 
 // dbtx lets the write helpers run against either the pool or a transaction.
 type dbtx interface {
@@ -94,8 +98,8 @@ func (s *Store) BuildAll(ctx context.Context, progress func(string)) (BuildResul
 			}
 			start := time.Now()
 			ex := extract.Repo(r.LocalPath)
-			progress(fmt.Sprintf("✓ %s — %d endpoints · %d schemas · %d deps (%s)",
-				r.Name, len(ex.Endpoints), len(ex.Tables)+len(ex.Messages), len(ex.Deps),
+			progress(fmt.Sprintf("✓ %s — %d endpoints · %d schemas · %d symbols · %d deps (%s)",
+				r.Name, len(ex.Endpoints), len(ex.Tables)+len(ex.Messages), len(ex.Symbols), len(ex.Deps),
 				time.Since(start).Round(time.Millisecond)))
 			mu.Lock()
 			for _, e := range ex.Errors {
@@ -154,6 +158,7 @@ func (s *Store) BuildAll(ctx context.Context, progress func(string)) (BuildResul
 			`DELETE FROM endpoints WHERE repo = ?`,
 			`DELETE FROM schemas WHERE repo = ?`,
 			`DELETE FROM packages WHERE repo = ?`,
+			`DELETE FROM symbols WHERE repo = ?`,
 			// agent-observed edges survive rebuilds — the scanner can't
 			// re-derive them, only `greybeard clean` forgets them
 			`DELETE FROM edges WHERE from_repo = ? AND source = 'scanned'`,
@@ -260,6 +265,9 @@ func (s *Store) storedSurface(ctx context.Context, r RepoRecord) (declared, erro
 	if o.ex.Tables, err = s.schemasOf(ctx, r.Identity); err != nil {
 		return o, err
 	}
+	if o.ex.Symbols, err = s.symbolsOf(ctx, r.Identity); err != nil {
+		return o, err
+	}
 	return o, nil
 }
 
@@ -286,13 +294,22 @@ func insertIn(ctx context.Context, x dbtx, query string, args ...any) (bool, err
 }
 
 // createDeclared writes a repo's own surface: endpoints, schemas (tables and
-// proto messages), and the owner's shares_schema(write) edge.
+// proto messages), symbols, and the owner's shares_schema(write) edge.
 func createDeclared(ctx context.Context, x dbtx, d declared) (counts, error) {
 	var c counts
 	id := d.rec.Identity
 	for _, ep := range d.ex.Endpoints {
 		ok, err := insertIn(ctx, x, `INSERT OR IGNORE INTO endpoints (repo, method, path) VALUES (?, ?, ?)`,
 			id, ep.Method, ep.Path)
+		if err != nil {
+			return c, err
+		}
+		if ok {
+			c.nodes++
+		}
+	}
+	for _, name := range d.ex.Symbols {
+		ok, err := insertIn(ctx, x, `INSERT OR IGNORE INTO symbols (repo, name) VALUES (?, ?)`, id, name)
 		if err != nil {
 			return c, err
 		}
@@ -343,11 +360,16 @@ func computeRefs(d declared, rest []declared) refPlan {
 	for _, ep := range d.ex.Endpoints {
 		selfPaths[ep.Path] = true
 	}
+	selfSymbols := map[string]bool{}
+	for _, sym := range d.ex.Symbols {
+		selfSymbols[sym] = true
+	}
 
 	type epOwner struct{ owner, method string }
 	pathOwners := map[string][]epOwner{}
 	tableOwners := map[string][]string{}
 	msgOwners := map[string][]string{}
+	symOwners := map[string][]string{}
 	for _, o := range rest {
 		for _, ep := range o.ex.Endpoints {
 			if selfPaths[ep.Path] || extract.GenericPath(ep.Path) {
@@ -367,6 +389,12 @@ func computeRefs(d declared, rest []declared) refPlan {
 			}
 			msgOwners[m] = append(msgOwners[m], o.rec.Identity)
 		}
+		for _, sym := range o.ex.Symbols {
+			if selfSymbols[sym] {
+				continue
+			}
+			symOwners[sym] = append(symOwners[sym], o.rec.Identity)
+		}
 	}
 
 	// imports: declared deps vs other repos' module paths.
@@ -380,7 +408,7 @@ func computeRefs(d declared, rest []declared) refPlan {
 		}
 	}
 
-	var paths, tables, msgs []string
+	var paths, tables, msgs, syms []string
 	for pa := range pathOwners {
 		paths = append(paths, pa)
 	}
@@ -390,7 +418,10 @@ func computeRefs(d declared, rest []declared) refPlan {
 	for m := range msgOwners {
 		msgs = append(msgs, m)
 	}
-	pathHits, tableHits, msgHits := extract.ScanRefs(d.rec.LocalPath, paths, tables, msgs)
+	for sym := range symOwners {
+		syms = append(syms, sym)
+	}
+	pathHits, tableHits, msgHits, symHits := extract.ScanRefs(d.rec.LocalPath, paths, tables, msgs, syms)
 
 	for pa := range pathHits {
 		for _, eo := range pathOwners[pa] {
@@ -427,6 +458,14 @@ func computeRefs(d declared, rest []declared) refPlan {
 				continue
 			}
 			p.schemas = append(p.schemas, schemaRef{owner: owner, name: m, mode: "read"})
+		}
+	}
+	for sym := range symHits {
+		for _, owner := range symOwners[sym] {
+			if !corroborated[owner] && !nameAlone(owner, sym, extract.GenericSymbol(sym)) {
+				continue
+			}
+			p.symbols = append(p.symbols, symbolRef{owner: owner, name: sym})
 		}
 	}
 	return p
@@ -485,10 +524,20 @@ func applyRefs(ctx context.Context, x dbtx, p refPlan) (counts, error) {
 			c.edges++
 		}
 	}
+	for _, sy := range p.symbols {
+		ok, err := insertIn(ctx, x, `INSERT OR IGNORE INTO edges (from_repo, edge_type, to_repo, detail)
+			VALUES (?, 'calls_symbol', ?, ?)`, p.from, sy.owner, sy.name)
+		if err != nil {
+			return c, err
+		}
+		if ok {
+			c.edges++
+		}
+	}
 	return c, nil
 }
 
-// endpointsOf / schemasOf read a repo's declared surface back out of the store.
+// endpointsOf / schemasOf / symbolsOf read a repo's declared surface back out of the store.
 func (s *Store) endpointsOf(ctx context.Context, identity string) ([]extract.Endpoint, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT method, path FROM endpoints WHERE repo = ?`, identity)
 	if err != nil {
@@ -508,6 +557,23 @@ func (s *Store) endpointsOf(ctx context.Context, identity string) ([]extract.End
 
 func (s *Store) schemasOf(ctx context.Context, identity string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name FROM schemas WHERE repo = ?`, identity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		names = append(names, n)
+	}
+	return names, rows.Err()
+}
+
+func (s *Store) symbolsOf(ctx context.Context, identity string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM symbols WHERE repo = ?`, identity)
 	if err != nil {
 		return nil, err
 	}

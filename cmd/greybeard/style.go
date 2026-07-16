@@ -32,6 +32,7 @@ func green(s string) string   { return paint("32", s) }
 func red(s string) string     { return paint("31", s) }
 func blue(s string) string    { return paint("34", s) }
 func magenta(s string) string { return paint("35", s) }
+func yellow(s string) string  { return paint("33", s) }
 
 // glyph colors a leading ✓ (green) or ✗ (red) status line.
 func glyph(line string) string {
@@ -53,6 +54,8 @@ func edgeColor(t string) string {
 		return green(t)
 	case "shares_schema":
 		return magenta(t)
+	case "calls_symbol":
+		return yellow(t)
 	}
 	return t
 }

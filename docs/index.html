@@ -345,7 +345,7 @@
     <div class="steps">
       <div class="step"><div class="n">01 EXTRACT</div><h3>Read what repos declare</h3><p>Manifests, OpenAPI specs, protos, SQL migrations — parsed once per repo, kept fresh by a session hook.</p></div>
       <div class="step"><div class="n">02 STORE</div><h3>A typed graph</h3><p>Repos, endpoints, schemas, packages — edges typed by the evidence behind them.</p></div>
-      <div class="step"><div class="n">03 SERVE</div><h3>MCP over stdio</h3><p>Any agent asks before changing anything. Empty answer = genuinely no known ties.</p></div>
+      <div class="step"><div class="n">03 SERVE</div><h3>MCP over stdio</h3><p>Any agent asks before changing anything. Every answer flags it if the graph has gaps, so empty never gets mistaken for confirmed.</p></div>
       <div class="step"><div class="n">04 LEARN</div><h3>Agents teach it back</h3><p>Relationships your agent verifies in code get recorded with file:line evidence. The graph compounds.</p></div>
     </div>
   </section>
@@ -358,9 +358,9 @@
       <div class="term-bar"><i></i><i></i><i></i><span>~/code</span></div>
       <pre><span class="prompt">❯</span> <span class="cmd">greybeard build</span>
 <span class="grey">🧔 </span>extracting 27 repos…
-  <span class="green">✓</span> billing-svc — 0 endpoints · 1 schemas · 2 deps (1ms)
-  <span class="green">✓</span> orders-svc — 2 endpoints · 2 schemas · 1 deps (2ms)
-  <span class="green">✓</span> connector-platform — 2 endpoints · 1 schemas · 14 deps (31ms)
+  <span class="green">✓</span> billing-svc — 0 endpoints · 1 schemas · 6 symbols · 2 deps (1ms)
+  <span class="green">✓</span> orders-svc — 2 endpoints · 2 schemas · 11 symbols · 1 deps (2ms)
+  <span class="green">✓</span> connector-platform — 2 endpoints · 1 schemas · 24 symbols · 14 deps (31ms)
 <span class="grey">🧔 </span>cross-referencing…
   <span class="green">✓</span> billing-svc — 3 cross-repo edges (1ms)
 
@@ -378,6 +378,7 @@
       <div class="edge-row"><span class="line" style="background:var(--imports)"></span><span class="name mono">imports</span><span>declared in manifests — a hard, compile-time fact</span></div>
       <div class="edge-row"><span class="line" style="background:var(--calls)"></span><span class="name mono">calls_api</span><span>runtime call, matched in quoted strings — can be versioned gracefully</span></div>
       <div class="edge-row"><span class="line" style="background:var(--schema)"></span><span class="name mono">shares_schema</span><span>data contract, matched in SQL context with org &amp; corroboration rules — breaks silently, checked loudly</span></div>
+      <div class="edge-row"><span class="line" style="background:var(--symbol)"></span><span class="name mono">calls_symbol</span><span>exported function/type/class name, same org &amp; corroboration rules as shares_schema</span></div>
     </div>
   </section>
 
@@ -390,6 +391,7 @@
       <div class="cmd-card"><code class="mono">/greybeard-query</code><div>ask the graph anything, plain language</div></div>
       <div class="cmd-card"><code class="mono">/greybeard-audit</code><div>what's empty, what's stale — changes nothing</div></div>
       <div class="cmd-card"><code class="mono">greybeard visualize</code><div>interactive force-directed graph at localhost</div></div>
+      <div class="cmd-card"><code class="mono">greybeard audit</code><div>same report, no agent needed — script it into CI</div></div>
       <div class="cmd-card"><code class="mono">greybeard update</code><div>self-updates daily in the background anyway</div></div>
     </div>
   </section>

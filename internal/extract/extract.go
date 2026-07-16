@@ -4,6 +4,7 @@ package extract
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ type Extraction struct {
 	Endpoints []Endpoint
 	Tables    []string // tables created by SQL migrations
 	Messages  []string // proto message names
+	Symbols   []string // top-level exported function/type/class names
 	Notes     string   // llms.txt-style human-readable description, if present
 	Errors    []string // per-file parse failures (logged, never fatal)
 }
@@ -46,48 +48,162 @@ var (
 	protoServiceRe = regexp.MustCompile(`^\s*service\s+(\w+)`)
 	protoRPCRe     = regexp.MustCompile(`^\s*rpc\s+(\w+)`)
 	protoMessageRe = regexp.MustCompile(`^\s*message\s+(\w+)`)
+
+	pyDepNameRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*`) // bare package name, strips version specifiers/extras
+	tomlNameRe    = regexp.MustCompile(`(?m)^\s*name\s*=\s*"([^"]+)"`)
+	tomlDepsRe    = regexp.MustCompile(`(?s)dependencies\s*=\s*\[(.*?)\]`)
+	quotedRe      = regexp.MustCompile(`"([^"]+)"`)
+	gemRe         = regexp.MustCompile(`(?m)^\s*gem\s+["']([\w.-]+)["']`)
+	gemspecNameRe = regexp.MustCompile(`\.name\s*=\s*["']([\w.-]+)["']`)
+	gradleNameRe  = regexp.MustCompile(`rootProject\.name\s*=\s*["']([\w.-]+)["']`)
+	// ponytail: only the `"group:artifact:version"` string form; the
+	// `group:`/`name:`/`version:` map form is rarer, add if it shows up.
+	gradleDepRe = regexp.MustCompile(`(?:implementation|api|compile|testImplementation|runtimeOnly|compileOnly)\s*\(?\s*["']([\w.-]+:[\w.-]+):[\w.+-]+["']`)
 )
+
+// symbolRes maps a source extension to the regexes that find top-level
+// exported declarations in it — one line-anchored pattern family per
+// language, same tradeoff as parseProto below: methods, nested/local
+// declarations, and non-idiomatic layouts are out of scope. Extraction is
+// text-level everywhere else in this file; this is no different.
+var symbolRes = map[string][]*regexp.Regexp{
+	".go": {
+		regexp.MustCompile(`(?m)^func\s+([A-Z]\w*)\s*\(`),
+		regexp.MustCompile(`(?m)^type\s+([A-Z]\w*)\s`),
+	},
+	".py": {
+		regexp.MustCompile(`(?m)^def\s+([A-Za-z_]\w*)`),
+		regexp.MustCompile(`(?m)^class\s+([A-Za-z_]\w*)`),
+	},
+	".rb": {
+		regexp.MustCompile(`(?m)^\s*def\s+([a-z_]\w*[?!]?)`),
+		regexp.MustCompile(`(?m)^\s*class\s+([A-Z]\w*)`),
+		regexp.MustCompile(`(?m)^\s*module\s+([A-Z]\w*)`),
+	},
+	".java": {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".kt":   {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".cs":   {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".php": {
+		regexp.MustCompile(`(?m)^\s*function\s+(\w+)\s*\(`),
+		regexp.MustCompile(`(?m)^\s*class\s+(\w+)`),
+	},
+	".rs": {
+		regexp.MustCompile(`(?m)^pub\s+(?:async\s+)?fn\s+(\w+)`),
+		regexp.MustCompile(`(?m)^pub\s+struct\s+(\w+)`),
+		regexp.MustCompile(`(?m)^pub\s+enum\s+(\w+)`),
+	},
+}
+var jsExportRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^export\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)`),
+	regexp.MustCompile(`(?m)^export\s+(?:default\s+)?class\s+(\w+)`),
+	regexp.MustCompile(`(?m)^export\s+const\s+(\w+)`),
+}
+
+func init() {
+	for _, ext := range []string{".js", ".ts", ".jsx", ".tsx"} {
+		symbolRes[ext] = jsExportRes
+	}
+}
+
+// parseSymbols pulls top-level exported names out of a source file by
+// extension. Python/Ruby names starting with "_" (private by convention)
+// are dropped.
+func parseSymbols(path, ext string) []string {
+	res, ok := symbolRes[ext]
+	if !ok {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
+	var syms []string
+	for _, re := range res {
+		for _, m := range re.FindAllStringSubmatch(s, -1) {
+			if name := m[1]; !strings.HasPrefix(name, "_") {
+				syms = append(syms, name)
+			}
+		}
+	}
+	return syms
+}
+
+// testSourceSuffixes are unambiguous per-language test-file naming
+// conventions (case-insensitive). Java/Kotlin/C#/PHP use a PascalCase
+// Test/Tests suffix instead — handled separately, case-sensitively, so
+// "Latest.cs" doesn't false-positive on the lowercase substring "test".
+var testSourceSuffixes = []string{
+	"_test.go", "_test.py", "_test.rb", "_spec.rb",
+	".test.js", ".test.ts", ".test.jsx", ".test.tsx",
+	".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx",
+}
+
+// isTestSource reports whether a source file is test code by common
+// per-language naming convention. Declared "symbols" in test files are test
+// cases, benchmarks, and fixtures — not real API surface — and must not
+// pollute the Symbol graph, same principle ScanRefs already applies by
+// skipping _test.go on the reference-scanning side.
+func isTestSource(path string) bool {
+	base := filepath.Base(path)
+	lower := strings.ToLower(base)
+	for _, suf := range testSourceSuffixes {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	if strings.HasPrefix(lower, "test_") && strings.HasSuffix(lower, ".py") {
+		return true
+	}
+	for _, ext := range []string{".java", ".kt", ".cs", ".php"} {
+		if strings.HasSuffix(base, "Test"+ext) || strings.HasSuffix(base, "Tests"+ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// pomXML is the subset of a Maven pom.xml this cares about.
+type pomXML struct {
+	GroupID    string `xml:"groupId"`
+	ArtifactID string `xml:"artifactId"`
+	Parent     struct {
+		GroupID string `xml:"groupId"`
+	} `xml:"parent"`
+	Dependencies struct {
+		Dependency []struct {
+			GroupID    string `xml:"groupId"`
+			ArtifactID string `xml:"artifactId"`
+		} `xml:"dependency"`
+	} `xml:"dependencies"`
+}
+
+// csprojXML is the subset of a .NET .csproj this cares about.
+type csprojXML struct {
+	ItemGroups []struct {
+		PackageReference []struct {
+			Include string `xml:"Include,attr"`
+		} `xml:"PackageReference"`
+	} `xml:"ItemGroup"`
+}
 
 // Repo extracts the declared surface of the repo at root. Missing or
 // unparseable files are recorded in Errors and skipped.
 func Repo(root string) Extraction {
 	var ex Extraction
 
-	if b, err := os.ReadFile(filepath.Join(root, "go.mod")); err == nil {
-		if f, err := modfile.Parse("go.mod", b, nil); err != nil {
-			ex.Errors = append(ex.Errors, "go.mod: "+err.Error())
-		} else {
-			if f.Module != nil {
-				ex.Modules = append(ex.Modules, f.Module.Mod.Path)
-			}
-			for _, r := range f.Require {
-				if !r.Indirect { // transitive deps are not a direct imports edge
-					ex.Deps = append(ex.Deps, r.Mod.Path)
-				}
-			}
+	// Manifests are read anywhere in the tree, not just the root — a
+	// monorepo keeps each service's go.mod/package.json/etc. next to its own
+	// code, and root-only reads silently missed it. Same skip rules as
+	// walkSources (vendor/build/hidden dirs excluded).
+	walkFiles(root, maxDeclaredFileSize, isManifestFile, func(path string) {
+		modules, deps, errStr := parseManifestFile(path)
+		ex.Modules = append(ex.Modules, modules...)
+		ex.Deps = append(ex.Deps, deps...)
+		if errStr != "" {
+			ex.Errors = append(ex.Errors, errStr)
 		}
-	}
-
-	if b, err := os.ReadFile(filepath.Join(root, "package.json")); err == nil {
-		var pkg struct {
-			Name         string            `json:"name"`
-			Dependencies map[string]string `json:"dependencies"`
-			DevDeps      map[string]string `json:"devDependencies"`
-		}
-		if err := json.Unmarshal(b, &pkg); err != nil {
-			ex.Errors = append(ex.Errors, "package.json: "+err.Error())
-		} else {
-			if pkg.Name != "" {
-				ex.Modules = append(ex.Modules, pkg.Name)
-			}
-			for d := range pkg.Dependencies {
-				ex.Deps = append(ex.Deps, d)
-			}
-			for d := range pkg.DevDeps {
-				ex.Deps = append(ex.Deps, d)
-			}
-		}
-	}
+	})
 
 	if b, err := os.ReadFile(filepath.Join(root, "llms.txt")); err == nil {
 		ex.Notes = strings.TrimSpace(string(b))
@@ -125,11 +241,16 @@ func Repo(root string) Extraction {
 				return
 			}
 			ex.Endpoints = append(ex.Endpoints, eps...)
+		case symbolRes[ext] != nil && !isTestSource(path):
+			ex.Symbols = append(ex.Symbols, parseSymbols(path, ext)...)
 		}
 	})
 
+	ex.Modules = dedupe(ex.Modules)
+	ex.Deps = dedupe(ex.Deps)
 	ex.Tables = dedupe(ex.Tables)
 	ex.Messages = dedupe(ex.Messages)
+	ex.Symbols = dedupe(ex.Symbols)
 	return ex
 }
 
@@ -180,6 +301,274 @@ func parseProto(path string) ([]Endpoint, []string) {
 	return eps, msgs
 }
 
+// manifestNames are exact filenames that declare a package's identity and/or
+// dependencies. Checked in every non-skipped directory (not just root) so
+// monorepo services keep their own Package identity.
+var manifestNames = map[string]bool{
+	"go.mod": true, "package.json": true, "requirements.txt": true,
+	"pyproject.toml": true, "Cargo.toml": true, "composer.json": true,
+	"Gemfile": true, "pom.xml": true,
+	"build.gradle": true, "build.gradle.kts": true,
+	"settings.gradle": true, "settings.gradle.kts": true,
+}
+
+func isManifestFile(base string) bool {
+	return manifestNames[base] || strings.HasSuffix(base, ".csproj") || strings.HasSuffix(base, ".gemspec")
+}
+
+// parseManifestFile parses one manifest file into whatever module identity
+// and/or dependencies it declares. Unrecognized names (isManifestFile
+// already filtered the walk, so this shouldn't hit) return zero values.
+func parseManifestFile(path string) (modules, deps []string, errStr string) {
+	base := filepath.Base(path)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, ""
+	}
+	switch {
+	case base == "go.mod":
+		f, err := modfile.Parse("go.mod", b, nil)
+		if err != nil {
+			return nil, nil, "go.mod: " + err.Error()
+		}
+		if f.Module != nil {
+			modules = append(modules, f.Module.Mod.Path)
+		}
+		for _, r := range f.Require {
+			if !r.Indirect { // transitive deps are not a direct imports edge
+				deps = append(deps, r.Mod.Path)
+			}
+		}
+	case base == "package.json":
+		name, d, err := parsePackageJSON(b)
+		if err != nil {
+			return nil, nil, "package.json: " + err.Error()
+		}
+		if name != "" {
+			modules = append(modules, name)
+		}
+		deps = d
+	case base == "requirements.txt":
+		deps = parseRequirementsTxt(b)
+	case base == "pyproject.toml":
+		name, d := parsePyproject(b)
+		if name != "" {
+			modules = append(modules, name)
+		}
+		deps = d
+	case base == "Cargo.toml":
+		name, d := parseCargoToml(b)
+		if name != "" {
+			modules = append(modules, name)
+		}
+		deps = d
+	case base == "composer.json":
+		name, d, err := parseComposerJSON(b)
+		if err != nil {
+			return nil, nil, "composer.json: " + err.Error()
+		}
+		if name != "" {
+			modules = append(modules, name)
+		}
+		deps = d
+	case base == "Gemfile":
+		for _, m := range gemRe.FindAllStringSubmatch(string(b), -1) {
+			deps = append(deps, m[1])
+		}
+	case strings.HasSuffix(base, ".gemspec"):
+		if m := gemspecNameRe.FindStringSubmatch(string(b)); m != nil {
+			modules = append(modules, m[1])
+		}
+	case base == "pom.xml":
+		name, d, err := parsePomXML(b)
+		if err != nil {
+			return nil, nil, "pom.xml: " + err.Error()
+		}
+		if name != "" {
+			modules = append(modules, name)
+		}
+		deps = d
+	case base == "build.gradle", base == "build.gradle.kts":
+		for _, m := range gradleDepRe.FindAllStringSubmatch(string(b), -1) {
+			deps = append(deps, m[1])
+		}
+	case base == "settings.gradle", base == "settings.gradle.kts":
+		if m := gradleNameRe.FindStringSubmatch(string(b)); m != nil {
+			modules = append(modules, m[1])
+		}
+	case strings.HasSuffix(base, ".csproj"):
+		name, d, err := parseCsproj(base, b)
+		if err != nil {
+			return nil, nil, base + ": " + err.Error()
+		}
+		if name != "" {
+			modules = append(modules, name)
+		}
+		deps = d
+	}
+	return modules, deps, ""
+}
+
+func parsePackageJSON(b []byte) (name string, deps []string, err error) {
+	var pkg struct {
+		Name         string            `json:"name"`
+		Dependencies map[string]string `json:"dependencies"`
+		DevDeps      map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(b, &pkg); err != nil {
+		return "", nil, err
+	}
+	for d := range pkg.Dependencies {
+		deps = append(deps, d)
+	}
+	for d := range pkg.DevDeps {
+		deps = append(deps, d)
+	}
+	return pkg.Name, deps, nil
+}
+
+func parseComposerJSON(b []byte) (name string, deps []string, err error) {
+	var pkg struct {
+		Name       string            `json:"name"`
+		Require    map[string]string `json:"require"`
+		RequireDev map[string]string `json:"require-dev"`
+	}
+	if err := json.Unmarshal(b, &pkg); err != nil {
+		return "", nil, err
+	}
+	for d := range pkg.Require {
+		if d != "php" && !strings.HasPrefix(d, "ext-") { // platform requirements, not packages
+			deps = append(deps, d)
+		}
+	}
+	for d := range pkg.RequireDev {
+		deps = append(deps, d)
+	}
+	return pkg.Name, deps, nil
+}
+
+func parsePomXML(b []byte) (module string, deps []string, err error) {
+	var pom pomXML
+	if err := xml.Unmarshal(b, &pom); err != nil {
+		return "", nil, err
+	}
+	groupID := pom.GroupID
+	if groupID == "" {
+		groupID = pom.Parent.GroupID
+	}
+	if pom.ArtifactID != "" {
+		module = groupID + ":" + pom.ArtifactID
+	}
+	for _, d := range pom.Dependencies.Dependency {
+		if d.ArtifactID != "" {
+			deps = append(deps, d.GroupID+":"+d.ArtifactID)
+		}
+	}
+	return module, deps, nil
+}
+
+func parseCsproj(base string, b []byte) (module string, deps []string, err error) {
+	var proj csprojXML
+	if err := xml.Unmarshal(b, &proj); err != nil {
+		return "", nil, err
+	}
+	module = strings.TrimSuffix(base, filepath.Ext(base))
+	for _, ig := range proj.ItemGroups {
+		for _, pr := range ig.PackageReference {
+			if pr.Include != "" {
+				deps = append(deps, pr.Include)
+			}
+		}
+	}
+	return module, deps, nil
+}
+
+// parseRequirementsTxt pulls bare package names out of a pip requirements
+// file, stripping version specifiers, extras, env markers, and options
+// (-r, --index-url, ...).
+func parseRequirementsTxt(b []byte) []string {
+	var deps []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
+			continue
+		}
+		if i := strings.IndexAny(line, ";#"); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if d := pyDepNameRe.FindString(line); d != "" {
+			deps = append(deps, d)
+		}
+	}
+	return deps
+}
+
+// parsePyproject reads a pyproject.toml for the project name and its
+// dependencies, supporting PEP 621 (`[project]`) and Poetry
+// (`[tool.poetry]`) layouts.
+func parsePyproject(b []byte) (name string, deps []string) {
+	s := string(b)
+	project := sectionBlock(s, "project")
+	if m := tomlNameRe.FindStringSubmatch(project); m != nil {
+		name = m[1]
+	}
+	if m := tomlDepsRe.FindStringSubmatch(project); m != nil {
+		for _, q := range quotedRe.FindAllStringSubmatch(m[1], -1) {
+			if d := pyDepNameRe.FindString(q[1]); d != "" {
+				deps = append(deps, d)
+			}
+		}
+	}
+	if name == "" {
+		if m := tomlNameRe.FindStringSubmatch(sectionBlock(s, "tool.poetry")); m != nil {
+			name = m[1]
+		}
+	}
+	for _, line := range strings.Split(sectionBlock(s, "tool.poetry.dependencies"), "\n") {
+		key := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
+		if key != "" && key != "python" {
+			deps = append(deps, key)
+		}
+	}
+	return name, deps
+}
+
+// parseCargoToml reads a Cargo.toml for the crate name and its dependency
+// keys across [dependencies], [dev-dependencies], and [build-dependencies].
+func parseCargoToml(b []byte) (name string, deps []string) {
+	s := string(b)
+	if m := tomlNameRe.FindStringSubmatch(sectionBlock(s, "package")); m != nil {
+		name = m[1]
+	}
+	for _, section := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
+		for _, line := range strings.Split(sectionBlock(s, section), "\n") {
+			key := strings.TrimSpace(strings.SplitN(line, "=", 2)[0])
+			if key != "" && !strings.HasPrefix(key, "#") {
+				deps = append(deps, key)
+			}
+		}
+	}
+	return name, deps
+}
+
+// sectionBlock returns the body of a top-level TOML `[header]` table: the
+// text between that header line and the next top-level `[...]`/`[[...]]` or
+// EOF. Not a general TOML parser — just enough to pull a name and a flat
+// list of dependency keys out of the handful of tables extraction cares
+// about.
+func sectionBlock(s, header string) string {
+	re := regexp.MustCompile(`(?m)^\[` + regexp.QuoteMeta(header) + `\]\s*$`)
+	loc := re.FindStringIndex(s)
+	if loc == nil {
+		return ""
+	}
+	rest := s[loc[1]:]
+	if next := regexp.MustCompile(`(?m)^\[`).FindStringIndex(rest); next != nil {
+		return rest[:next[0]]
+	}
+	return rest
+}
+
 // genericTables are table names so common that a name collision means
 // nothing: two unrelated projects both having a "users" table is the norm,
 // not a shared schema. These only link repos that already have another
@@ -197,6 +586,24 @@ var genericTables = map[string]bool{
 // GenericTable reports whether a table name is too common to link repos on
 // the name alone.
 func GenericTable(name string) bool { return genericTables[strings.ToLower(name)] }
+
+// genericSymbols are exported names so common across codebases that a match
+// means nothing on its own — same corroboration rule as genericTables.
+var genericSymbols = map[string]bool{
+	"new": true, "init": true, "run": true, "start": true, "stop": true,
+	"close": true, "get": true, "set": true, "parse": true, "load": true,
+	"save": true, "open": true, "read": true, "write": true, "config": true,
+	"client": true, "server": true, "handler": true, "request": true,
+	"response": true, "error": true, "context": true, "options": true,
+	"result": true, "builder": true, "manager": true, "service": true,
+	"controller": true, "model": true, "base": true, "main": true, "test": true,
+	"helper": true, "util": true, "utils": true, "default": true, "create": true,
+	"delete": true, "update": true, "list": true, "validate": true, "process": true,
+}
+
+// GenericSymbol reports whether an exported name is too common to link
+// repos on the name alone.
+func GenericSymbol(name string) bool { return genericSymbols[strings.ToLower(name)] }
 
 // genericPaths are endpoints every service declares; a match on them says
 // nothing about who calls whom.
@@ -225,6 +632,7 @@ var sourceExts = map[string]bool{
 var manifestFiles = map[string]bool{
 	"go.mod": true, "go.sum": true, "package.json": true,
 	"package-lock.json": true, "yarn.lock": true, "pnpm-lock.yaml": true,
+	"composer.json": true, "composer.lock": true,
 }
 
 const (
@@ -245,10 +653,11 @@ const (
 //
 // ponytail: still text-level, no per-language AST — treat hits as "worth
 // checking", not proof; that ceiling is documented in the README.
-func ScanRefs(root string, paths, tables, messages []string) (pathHits map[string]bool, tableHits map[string]string, messageHits map[string]bool) {
+func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits map[string]bool, tableHits map[string]string, messageHits map[string]bool, symbolHits map[string]bool) {
 	pathHits = map[string]bool{}
 	tableHits = map[string]string{}
 	messageHits = map[string]bool{}
+	symbolHits = map[string]bool{}
 	nameRe := func(kw, t string) *regexp.Regexp {
 		return regexp.MustCompile(`(?i)\b(` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
 	}
@@ -262,12 +671,20 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits map[strin
 	for _, m := range messages {
 		messageRes[m] = regexp.MustCompile(`\b` + regexp.QuoteMeta(m) + `\b`)
 	}
+	// word-boundary only, no call-site requirement (unlike paths, which need
+	// a quote) — genericity + org corroboration in computeRefs carries the
+	// precision burden instead, same as table names.
+	symRes := make(map[string]*regexp.Regexp, len(symbols))
+	for _, sym := range symbols {
+		symRes[sym] = regexp.MustCompile(`\b` + regexp.QuoteMeta(sym) + `\b`)
+	}
 	walkSources(root, maxScanFileSize, func(path string) {
 		base := filepath.Base(path)
-		// test code references tables/endpoints via fixtures and mocks, not
-		// real dependencies — it must not create edges (testdata/ dirs are
-		// skipped by the walk itself)
-		if manifestFiles[base] || strings.HasSuffix(base, "_test.go") {
+		// test code references tables/endpoints/symbols via fixtures and
+		// mocks, not real dependencies — it must not create edges (testdata/
+		// dirs are skipped by the walk itself). isTestSource covers every
+		// language ScanRefs scans, not just Go.
+		if manifestFiles[base] || isTestSource(path) {
 			return
 		}
 		b, err := os.ReadFile(path)
@@ -306,8 +723,13 @@ func ScanRefs(root string, paths, tables, messages []string) (pathHits map[strin
 				}
 			}
 		}
+		for sym, re := range symRes {
+			if !symbolHits[sym] && re.MatchString(s) {
+				symbolHits[sym] = true
+			}
+		}
 	})
-	return pathHits, tableHits, messageHits
+	return pathHits, tableHits, messageHits, symbolHits
 }
 
 // skipDirs are dependency/build trees that would be slow to walk and full of
@@ -324,6 +746,15 @@ var skipDirs = map[string]bool{
 // walkSources visits every scannable source file under root, skipping VCS,
 // hidden, and dependency/build directories, and files over maxSize bytes.
 func walkSources(root string, maxSize int64, visit func(path string)) {
+	walkFiles(root, maxSize, func(base string) bool {
+		return sourceExts[strings.ToLower(filepath.Ext(base))]
+	}, visit)
+}
+
+// walkFiles visits every file under root whose base name satisfies match,
+// skipping VCS, hidden, and dependency/build directories, and files over
+// maxSize bytes.
+func walkFiles(root string, maxSize int64, match func(base string) bool, visit func(path string)) {
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -338,7 +769,7 @@ func walkSources(root string, maxSize int64, visit func(path string)) {
 			}
 			return nil
 		}
-		if !sourceExts[strings.ToLower(filepath.Ext(path))] {
+		if !match(d.Name()) {
 			return nil
 		}
 		if fi, err := d.Info(); err != nil || fi.Size() > maxSize {

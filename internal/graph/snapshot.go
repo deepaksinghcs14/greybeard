@@ -15,6 +15,7 @@ type VizRepo struct {
 	Endpoints     []string `json:"endpoints"`
 	Schemas       []string `json:"schemas"`
 	Packages      []string `json:"packages"` // packages this repo provides to others
+	Symbols       []string `json:"symbols"`  // exported functions/types/classes this repo declares
 }
 
 type VizEdge struct {
@@ -22,6 +23,8 @@ type VizEdge struct {
 	To       string `json:"to"`
 	EdgeType string `json:"edge_type"`
 	Detail   string `json:"detail"`
+	Source   string `json:"source"` // scanned | agent
+	Evidence string `json:"evidence,omitempty"`
 }
 
 type VizData struct {
@@ -40,7 +43,7 @@ func (s *Store) Snapshot(ctx context.Context) (VizData, error) {
 	for _, r := range repos {
 		vr := VizRepo{
 			Identity: r.Identity, Name: r.Name, Stale: r.Stale(stale),
-			Endpoints: []string{}, Schemas: []string{}, Packages: []string{},
+			Endpoints: []string{}, Schemas: []string{}, Packages: []string{}, Symbols: []string{},
 		}
 		if t, err := time.Parse(time.RFC3339, r.LastIndexedAt); err == nil {
 			vr.LastIndexedAt = t.Local().Format("Jan 2, 2006 15:04")
@@ -57,6 +60,12 @@ func (s *Store) Snapshot(ctx context.Context) (VizData, error) {
 		}
 		if vr.Schemas == nil {
 			vr.Schemas = []string{}
+		}
+		if vr.Symbols, err = s.symbolsOf(ctx, r.Identity); err != nil {
+			return data, err
+		}
+		if vr.Symbols == nil {
+			vr.Symbols = []string{}
 		}
 		rows, err := s.db.QueryContext(ctx, `SELECT import_path FROM packages WHERE repo = ?`, r.Identity)
 		if err != nil {
@@ -77,14 +86,14 @@ func (s *Store) Snapshot(ctx context.Context) (VizData, error) {
 		data.Repos = append(data.Repos, vr)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail FROM depends_on`)
+	rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail, source, evidence FROM depends_on`)
 	if err != nil {
 		return data, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var e VizEdge
-		if err := rows.Scan(&e.From, &e.To, &e.EdgeType, &e.Detail); err != nil {
+		if err := rows.Scan(&e.From, &e.To, &e.EdgeType, &e.Detail, &e.Source, &e.Evidence); err != nil {
 			return data, err
 		}
 		data.Edges = append(data.Edges, e)

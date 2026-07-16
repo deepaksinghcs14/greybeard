@@ -5,7 +5,7 @@ import "context"
 // CleanResult reports what a Clean removed.
 type CleanResult struct {
 	EdgesRemoved int  `json:"edges_removed"`
-	NodesRemoved int  `json:"nodes_removed"` // endpoints + schemas + packages
+	NodesRemoved int  `json:"nodes_removed"` // endpoints + schemas + packages + symbols
 	ReposRemoved int  `json:"repos_removed"` // only with all=true
 	ReposKept    int  `json:"repos_kept"`
 	All          bool `json:"all"`
@@ -28,7 +28,8 @@ func (s *Store) Clean(ctx context.Context, all bool) (CleanResult, error) {
 		return res, err
 	}
 	if res.NodesRemoved, err = count(`SELECT
-		(SELECT count(*) FROM endpoints) + (SELECT count(*) FROM schemas) + (SELECT count(*) FROM packages)`); err != nil {
+		(SELECT count(*) FROM endpoints) + (SELECT count(*) FROM schemas) +
+		(SELECT count(*) FROM packages) + (SELECT count(*) FROM symbols)`); err != nil {
 		return res, err
 	}
 	repos, err := count(`SELECT count(*) FROM repos`)
@@ -42,7 +43,8 @@ func (s *Store) Clean(ctx context.Context, all bool) (CleanResult, error) {
 	}
 	defer tx.Rollback()
 	for _, q := range []string{
-		`DELETE FROM edges`, `DELETE FROM endpoints`, `DELETE FROM schemas`, `DELETE FROM packages`,
+		`DELETE FROM edges`, `DELETE FROM endpoints`, `DELETE FROM schemas`,
+		`DELETE FROM packages`, `DELETE FROM symbols`,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
 			return res, err
