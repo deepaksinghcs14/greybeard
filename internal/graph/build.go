@@ -98,8 +98,8 @@ func (s *Store) BuildAll(ctx context.Context, progress func(string)) (BuildResul
 			}
 			start := time.Now()
 			ex := extract.Repo(r.LocalPath)
-			progress(fmt.Sprintf("✓ %s — %d endpoints · %d schemas · %d deps (%s)",
-				r.Name, len(ex.Endpoints), len(ex.Tables)+len(ex.Messages), len(ex.Deps),
+			progress(fmt.Sprintf("✓ %s — %d endpoints · %d schemas · %d symbols · %d deps (%s)",
+				r.Name, len(ex.Endpoints), len(ex.Tables)+len(ex.Messages), len(ex.Symbols), len(ex.Deps),
 				time.Since(start).Round(time.Millisecond)))
 			mu.Lock()
 			for _, e := range ex.Errors {
