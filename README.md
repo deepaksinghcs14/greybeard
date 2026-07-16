@@ -147,6 +147,7 @@ copy lives in `~/go/bin` — remove that one too if you made one.
 | `greybeard visualize` | Same, from the terminal (`--port`, default 7333) |
 | `greybeard build --background` | Detached build, desktop notification when done |
 | `greybeard clean [--all]` | Forget extracted relations (`--all`: everything) |
+| `greybeard audit` | Same as `/greybeard-audit`, from the terminal — no agent needed |
 | `greybeard update` | Self-update — also runs daily in the background |
 
 The agent-facing queries (`get_related_repos`, `get_callers_of`,

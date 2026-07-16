@@ -27,6 +27,7 @@ Usage:
                                      notifies you on your desktop when done
   greybeard serve                    MCP server over stdio
   greybeard visualize [--port 7333]  open the graph in your browser
+  greybeard audit                    read-only health report: empty and stale repos
   greybeard update                   self-update to the latest release
   greybeard clean [--all]            forget all extracted relations (build
                                      re-creates them); --all also unregisters repos
@@ -56,6 +57,8 @@ func main() {
 		err = cmdServe(ctx)
 	case "visualize":
 		err = cmdVisualize(ctx, os.Args[2:])
+	case "audit":
+		err = cmdAudit(ctx)
 	case "update":
 		err = cmdUpdate(ctx, os.Args[2:])
 	case "clean":
@@ -189,6 +192,45 @@ func cmdClean(ctx context.Context, args []string) error {
 		fmt.Printf("%s repos still registered — run %s to relearn\n",
 			bold(fmt.Sprint(res.ReposKept)), bold("greybeard build"))
 	}
+	return nil
+}
+
+// cmdAudit is the CLI face of the audit_graph MCP tool — read-only, changes
+// nothing, safe to script into CI or run ad hoc outside an agent session.
+func cmdAudit(ctx context.Context) error {
+	st, err := graph.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	res, err := st.Audit(ctx, graph.StaleAfter())
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s %s repos registered\n", grey("🧔"), bold(fmt.Sprint(res.TotalRepos)))
+	if len(res.EmptyRepos) == 0 && len(res.StaleRepos) == 0 {
+		fmt.Printf("%s everything's covered — nothing empty, nothing stale\n", green("✓"))
+		return nil
+	}
+	if len(res.EmptyRepos) > 0 {
+		fmt.Printf("\n%s %s repo(s) with nothing extracted (no parseable manifests, or extraction hasn't run):\n",
+			red("!"), bold(fmt.Sprint(len(res.EmptyRepos))))
+		for _, r := range res.EmptyRepos {
+			fmt.Printf("  %s %s\n", dim("·"), r)
+		}
+	}
+	if len(res.StaleRepos) > 0 {
+		fmt.Printf("\n%s %s repo(s) stale (never indexed, or past the freshness threshold):\n",
+			red("!"), bold(fmt.Sprint(len(res.StaleRepos))))
+		for _, r := range res.StaleRepos {
+			when := r.LastIndexedAt
+			if when == "" {
+				when = "never indexed"
+			}
+			fmt.Printf("  %s %s %s\n", dim("·"), r.Repo, dim("("+when+")"))
+		}
+	}
+	fmt.Printf("\n%s run %s to fix\n", grey("🧔"), bold("greybeard build"))
 	return nil
 }
 
