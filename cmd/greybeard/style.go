@@ -60,19 +60,25 @@ func edgeColor(t string) string {
 // banner is the old man himself. Shown on usage and version only.
 func banner() string {
 	art := []string{
-		`      .-"""-.      `,
-		`     / .===. \     `,
-		`     \/ o o \/     `,
-		`     ( \___/ )     `,
-		`  ____)     (____  `,
-		` '-.__ ~~~~~ __.-' `,
-		`      '~~~~~'      `,
+		`      .-"""""-.    `,
+		`     / .-. .-. \   `,
+		`    |  (o) (o)  |  `,
+		`    |     ^     |  `,
+		`     \  '==='  /   `,
+		`   .-'~~~~~~~~~'-. `,
+		`  /~~~~~~~~~~~~~~~\`,
+		` (~~~~~~~~~~~~~~~~~)`,
+		`  \~~~~~~~~~~~~~~~/`,
+		`   '~~~~~~~~~~~~~' `,
 	}
 	tag := []string{
 		"",
 		"",
 		"   greybeard " + version,
 		"   " + dim("he remembers what your repos forgot"),
+		"",
+		"",
+		"",
 		"",
 		"",
 		"",

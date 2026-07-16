@@ -23,7 +23,8 @@ const usage = `greybeard — he remembers what your repos forgot
 
 Usage:
   greybeard init --root <path>       scan a tree for git repos and register them
-  greybeard build                    full extraction across all registered repos
+  greybeard build [--background]     full extraction; --background detaches and
+                                     notifies you on your desktop when done
   greybeard serve                    MCP server over stdio
   greybeard visualize [--port 7333]  open the graph in your browser
   greybeard update                   self-update to the latest release
@@ -46,7 +47,7 @@ func main() {
 	case "init":
 		err = cmdInit(ctx, os.Args[2:])
 	case "build":
-		err = cmdBuild(ctx)
+		err = cmdBuild(ctx, os.Args[2:])
 	case "serve":
 		err = cmdServe(ctx)
 	case "visualize":
@@ -98,9 +99,31 @@ func cmdInit(ctx context.Context, args []string) error {
 	return nil
 }
 
-func cmdBuild(ctx context.Context) error {
+func cmdBuild(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("build", flag.ExitOnError)
+	background := fs.Bool("background", false, "build detached and send a desktop notification when done")
+	notifyWhenDone := fs.Bool("notify", false, "") // internal: set on the child spawned by --background
+	fs.Parse(args)
+
+	if *background {
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		c := exec.Command(exe, "build", "--notify")
+		c.Stdout, c.Stderr = nil, nil
+		if err := c.Start(); err != nil {
+			return err
+		}
+		fmt.Printf("%s building in the background — greybeard will notify you when it's done\n", grey("🧔"))
+		return nil
+	}
+
 	st, err := graph.Open(ctx)
 	if err != nil {
+		if *notifyWhenDone {
+			notify("greybeard build failed", err.Error())
+		}
 		return err
 	}
 	defer st.Close()
@@ -113,8 +136,13 @@ func cmdBuild(ctx context.Context) error {
 		}
 	})
 	if err != nil {
+		if *notifyWhenDone {
+			notify("greybeard build failed", err.Error())
+		}
 		return err
 	}
+	summary := fmt.Sprintf("%d repos · %d nodes · %d edges (%s)",
+		res.ReposProcessed, res.Nodes, res.Edges, time.Since(start).Round(time.Millisecond))
 	fmt.Printf("\n%s %s repos · %s nodes · %s edges %s\n",
 		grey("🧔 done."),
 		bold(fmt.Sprint(res.ReposProcessed)), bold(fmt.Sprint(res.Nodes)), bold(fmt.Sprint(res.Edges)),
@@ -122,8 +150,29 @@ func cmdBuild(ctx context.Context) error {
 	if len(res.Failed) > 0 {
 		fmt.Printf("%s %d repos had extraction problems (listed above) — they're partially covered\n",
 			red("!"), len(res.Failed))
+		summary += fmt.Sprintf(" — %d repos had problems", len(res.Failed))
+	}
+	if *notifyWhenDone {
+		notify("greybeard — graph rebuilt", summary)
 	}
 	return nil
+}
+
+// notify sends a desktop notification, best-effort (silently a no-op where
+// unsupported).
+func notify(title, body string) {
+	switch {
+	case commandExists("osascript"): // macOS
+		exec.Command("osascript", "-e",
+			fmt.Sprintf("display notification %q with title %q", body, title)).Run()
+	case commandExists("notify-send"): // Linux
+		exec.Command("notify-send", title, body).Run()
+	}
+}
+
+func commandExists(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 func cmdServe(ctx context.Context) error {
