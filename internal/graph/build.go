@@ -177,6 +177,9 @@ func (s *Store) Reindex(ctx context.Context, repo discover.Repo) error {
 		if o.ex.Endpoints, err = s.endpointsOf(ctx, r.Identity); err != nil {
 			return err
 		}
+		// ponytail: the schemas table stores tables and proto messages
+		// undistinguished, so reindex treats them all as tables (SQL-context
+		// matching). Proto-message links refresh on the next full build.
 		if o.ex.Tables, err = s.schemasOf(ctx, r.Identity); err != nil {
 			return err
 		}
@@ -255,13 +258,17 @@ func (s *Store) crossRef(ctx context.Context, d declared, rest []declared) (coun
 
 	type epOwner struct{ owner, method string }
 	pathOwners := map[string][]epOwner{} // endpoint path -> declaring repos
-	wordOwners := map[string][]string{}  // schema/message name -> declaring repos
+	tableOwners := map[string][]string{} // table name -> declaring repos
+	msgOwners := map[string][]string{}   // proto message -> declaring repos
 	for _, o := range rest {
 		for _, ep := range o.ex.Endpoints {
 			pathOwners[ep.Path] = append(pathOwners[ep.Path], epOwner{owner: o.rec.Identity, method: ep.Method})
 		}
-		for _, t := range append(append([]string{}, o.ex.Tables...), o.ex.Messages...) {
-			wordOwners[t] = append(wordOwners[t], o.rec.Identity)
+		for _, t := range o.ex.Tables {
+			tableOwners[t] = append(tableOwners[t], o.rec.Identity)
+		}
+		for _, m := range o.ex.Messages {
+			msgOwners[m] = append(msgOwners[m], o.rec.Identity)
 		}
 	}
 
@@ -292,14 +299,27 @@ func (s *Store) crossRef(ctx context.Context, d declared, rest []declared) (coun
 		}
 	}
 
-	var paths, words []string
+	var paths, tables, msgs []string
 	for p := range pathOwners {
 		paths = append(paths, p)
 	}
-	for w := range wordOwners {
-		words = append(words, w)
+	for t := range tableOwners {
+		tables = append(tables, t)
 	}
-	pathHits, wordHits := extract.ScanRefs(d.rec.LocalPath, paths, words)
+	for m := range msgOwners {
+		msgs = append(msgs, m)
+	}
+	pathHits, tableHits, msgHits := extract.ScanRefs(d.rec.LocalPath, paths, tables, msgs)
+	wordHits := map[string]bool{}
+	wordOwners := map[string][]string{}
+	for t := range tableHits {
+		wordHits[t] = true
+		wordOwners[t] = tableOwners[t]
+	}
+	for m := range msgHits {
+		wordHits[m] = true
+		wordOwners[m] = append(wordOwners[m], msgOwners[m]...)
+	}
 
 	for p := range pathHits {
 		for _, eo := range pathOwners[p] {

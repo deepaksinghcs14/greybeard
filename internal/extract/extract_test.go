@@ -95,31 +95,51 @@ func TestExtractUnparseableManifestIsNonFatal(t *testing.T) {
 }
 
 func TestScanRefs(t *testing.T) {
-	subs, words := ScanRefs(billingFixture,
+	paths, tables, _ := ScanRefs(billingFixture,
 		[]string{"/orders", "/orders/{id}", "/nothing-here"},
-		[]string{"orders", "order", "customers"})
-	if !subs["/orders"] {
-		t.Error("expected substring hit for /orders")
+		[]string{"orders", "order", "order_items", "customers"},
+		nil)
+	if !paths["/orders"] {
+		t.Error("expected path hit for /orders (quoted in client code)")
 	}
-	if subs["/orders/{id}"] || subs["/nothing-here"] {
-		t.Errorf("unexpected substring hits: %v", subs)
+	if paths["/orders/{id}"] || paths["/nothing-here"] {
+		t.Errorf("unexpected path hits: %v", paths)
 	}
-	if !words["orders"] {
-		t.Error("expected word hit for orders")
+	if !tables["orders"] {
+		t.Error("expected table hit for orders (FROM orders in a query)")
 	}
-	if words["order"] {
-		t.Error("word match must respect boundaries: 'order' should not hit inside 'orders'")
+	if tables["order"] {
+		t.Error("table match must respect word boundaries")
 	}
-	if words["customers"] {
+	if tables["order_items"] {
+		t.Error("a table name in a comment (no SQL context) must not count as a reference")
+	}
+	if tables["customers"] {
 		t.Error("unexpected hit for customers")
+	}
+}
+
+func TestScanRefsMessagesOnlyInProto(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "notes.go"),
+		[]byte("package x\n// handles Order objects\nvar Order int\n"), 0o644)
+	_, _, msgs := ScanRefs(dir, nil, nil, []string{"Order"})
+	if msgs["Order"] {
+		t.Error("message names outside .proto files must not count")
+	}
+	os.WriteFile(filepath.Join(dir, "shared.proto"),
+		[]byte("syntax = \"proto3\";\nmessage Order { string id = 1; }\n"), 0o644)
+	_, _, msgs = ScanRefs(dir, nil, nil, []string{"Order"})
+	if !msgs["Order"] {
+		t.Error("message name in a .proto file should count")
 	}
 }
 
 func TestScanRefsSkipsManifests(t *testing.T) {
 	// billing's go.mod contains "example.com/orders-svc", but manifests are
 	// excluded so a declared dep doesn't double as an API/schema reference.
-	subs, _ := ScanRefs(billingFixture, []string{"example.com/orders-svc"}, nil)
-	if subs["example.com/orders-svc"] {
+	paths, _, _ := ScanRefs(billingFixture, []string{"example.com/orders-svc"}, nil, nil)
+	if paths["example.com/orders-svc"] {
 		t.Error("manifest content should not count as a reference")
 	}
 }

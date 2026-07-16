@@ -193,9 +193,11 @@ capture:
   script, a table read by a BI tool, anything outside the parsed manifests.
 - **Repos it hasn't extracted yet** — a gap is "unknown," not "no dependency."
   If a repo was first opened minutes ago, extraction may still be running.
-- **Semantic matches** — reference detection is text scanning, not per-language
-  AST analysis. It errs toward flagging (a table name in a comment counts as a
-  reference); treat hits as "worth checking," not proof.
+- **Semantic matches** — reference detection is contextual text scanning, not
+  per-language AST analysis. A table name only counts next to a SQL keyword
+  (`FROM orders`, `JOIN orders`), an endpoint path only on a line with a string
+  literal, a proto message only inside `.proto` files — but it's still text,
+  so treat hits as "worth checking," not proof.
 
 ## License
 

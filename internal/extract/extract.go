@@ -186,43 +186,68 @@ var manifestFiles = map[string]bool{
 
 const maxScanFileSize = 512 * 1024
 
-// ScanRefs walks the repo's source files once and reports which needles occur:
-// substrings matched anywhere (endpoint paths), words matched on word
-// boundaries (table/message names).
-// ponytail: plain text search, no AST — a mention in a comment counts as a
-// reference. Good enough for blast-radius hints; upgrade to per-language
-// parsing if false positives hurt.
-func ScanRefs(root string, substrings, words []string) (subHits, wordHits map[string]bool) {
-	subHits = map[string]bool{}
-	wordHits = map[string]bool{}
-	wordRes := make(map[string]*regexp.Regexp, len(words))
-	for _, w := range words {
-		wordRes[w] = regexp.MustCompile(`\b` + regexp.QuoteMeta(w) + `\b`)
+// ScanRefs walks the repo's source files once and reports which needles occur.
+// Matching is contextual, not bare name matching — a table name in a comment
+// or an unrelated identifier must not become a graph edge:
+//   - paths (endpoints): substring match, but only on lines that contain a
+//     string-literal quote — code calls URLs in quoted strings, prose doesn't
+//   - tables: word match preceded by a SQL keyword (FROM/JOIN/INTO/UPDATE/
+//     CREATE TABLE/DELETE FROM)
+//   - messages (proto): word match in .proto files only, where sharing a
+//     message is an actual contract
+//
+// ponytail: still text-level, no per-language AST — treat hits as "worth
+// checking", not proof; that ceiling is documented in the README.
+func ScanRefs(root string, paths, tables, messages []string) (pathHits, tableHits, messageHits map[string]bool) {
+	pathHits = map[string]bool{}
+	tableHits = map[string]bool{}
+	messageHits = map[string]bool{}
+	tableRes := make(map[string]*regexp.Regexp, len(tables))
+	for _, t := range tables {
+		tableRes[t] = regexp.MustCompile(
+			`(?i)(from|join|into|update|delete\s+from|create\s+table(\s+if\s+not\s+exists)?)[\s"'` + "`" + `]+` +
+				regexp.QuoteMeta(t) + `\b`)
+	}
+	messageRes := make(map[string]*regexp.Regexp, len(messages))
+	for _, m := range messages {
+		messageRes[m] = regexp.MustCompile(`\b` + regexp.QuoteMeta(m) + `\b`)
+	}
+	done := func() bool {
+		return len(pathHits) == len(paths) && len(tableHits) == len(tables) && len(messageHits) == len(messages)
 	}
 	walkSources(root, func(path string) {
-		if manifestFiles[filepath.Base(path)] {
+		if manifestFiles[filepath.Base(path)] || done() {
 			return
-		}
-		if len(subHits) == len(substrings) && len(wordHits) == len(words) {
-			return // everything already found
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return
 		}
 		s := string(b)
-		for _, n := range substrings {
-			if !subHits[n] && strings.Contains(s, n) {
-				subHits[n] = true
+		isProto := strings.HasSuffix(strings.ToLower(path), ".proto")
+		for _, line := range strings.Split(s, "\n") {
+			if strings.ContainsAny(line, "\"'`") {
+				for _, p := range paths {
+					if !pathHits[p] && strings.Contains(line, p) {
+						pathHits[p] = true
+					}
+				}
 			}
 		}
-		for w, re := range wordRes {
-			if !wordHits[w] && re.MatchString(s) {
-				wordHits[w] = true
+		for t, re := range tableRes {
+			if !tableHits[t] && re.MatchString(s) {
+				tableHits[t] = true
+			}
+		}
+		if isProto {
+			for m, re := range messageRes {
+				if !messageHits[m] && re.MatchString(s) {
+					messageHits[m] = true
+				}
 			}
 		}
 	})
-	return subHits, wordHits
+	return pathHits, tableHits, messageHits
 }
 
 // walkSources visits every scannable source file under root, skipping VCS and
