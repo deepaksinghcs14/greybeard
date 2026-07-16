@@ -42,11 +42,12 @@ globally-breaking change, and you find out in production.
 | Command | What it does |
 |---|---|
 | `greybeard init --root <path>` | Scan a tree for git repos and register every one found |
-| `greybeard build` | Full extraction across all registered repos (safe to rerun; not incremental) |
+| `greybeard build` | Full extraction across all registered repos (safe to rerun; `--background` detaches and sends a desktop notification when done) |
 | `greybeard serve` | MCP server over stdio — this is what your agent talks to |
 | `greybeard visualize` | Open the graph as an interactive local web page (`--port`, default 7333) |
 | `greybeard update` | Self-update to the latest GitHub release |
 | `greybeard clean` | Forget all extracted relations (`build` re-creates them); `--all` also unregisters every repo |
+| `greybeard uninstall` | Remove the binary; `--purge` also deletes the graph data |
 | `greybeard check --cwd <path>` | Session-start freshness check: no-ops if the repo is registered and fresh, otherwise queues background extraction and returns immediately |
 
 `check` also self-updates the binary in the background at most once a day, so
@@ -166,6 +167,18 @@ Repo identity is the normalized git remote URL (falling back to absolute path
 for remoteless repos), so the same repo cloned twice is one node, not two.
 Freshness is per-repo via `last_indexed_at`; the session-start hook re-queues
 extraction for anything older than `GREYBEARD_STALE_AFTER` (default `24h`).
+
+Every edge also carries its provenance in a `source` field:
+
+- **`scanned`** — produced by extraction. Rebuilt on every `build`.
+- **`agent`** — recorded by your coding agent via the `record_relation` MCP
+  tool, for relationships extraction can't see (a URL assembled from config,
+  an ORM writing a table with no raw SQL). The skill holds the agent to a
+  strict standard: only relationships verified in the code in front of it,
+  with mandatory `file:line` evidence stored on the edge. Agent edges survive
+  rebuilds — the scanner can't re-derive them — and only `greybeard clean`
+  forgets them. The graph gets better the more you work with your agent in
+  these repos.
 
 ## Uninstall
 
