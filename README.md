@@ -1,6 +1,15 @@
-# greybeard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo.svg" width="220" alt="greybeard, the old man who remembers what your repos forgot">
+  </picture>
+</p>
 
-**He remembers what your repos forgot.**
+<h1 align="center">greybeard</h1>
+
+<p align="center">
+  <em>He remembers what your repos forgot.</em>
+</p>
 
 The old man has been here longer than any of your microservices. He watched
 `orders-svc` split off from the monolith. He remembers who still reads that

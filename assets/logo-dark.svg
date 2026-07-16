@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1220" width="1000" height="1220">
+  <!-- greybeard: the old man who remembers what your repos forgot.
+       Hand-sketch style: black ink, deadpan, the beard is the only grey thing here. -->
+
+  <!-- ink specks -->
+  <g fill="#ecebe6">
+    <circle cx="108" cy="180" r="7"/>
+    <circle cx="160" cy="410" r="4"/>
+    <path d="M120 620 l16 -6 4 12 -14 6 z"/>
+    <circle cx="905" cy="235" r="5"/>
+    <circle cx="868" cy="620" r="7"/>
+    <path d="M912 505 l14 4 -6 13 -12 -6 z"/>
+    <circle cx="230" cy="95" r="4"/>
+    <circle cx="795" cy="90" r="6"/>
+    <circle cx="90" cy="905" r="5"/>
+    <circle cx="925" cy="880" r="4"/>
+    <path d="M840 1060 l12 -4 5 10 -12 5 z"/>
+    <circle cx="150" cy="1105" r="6"/>
+  </g>
+
+  <!-- face: bald, slightly lumpy, hand-wobbled -->
+  <path d="M500 118
+           C 340 112, 205 218, 182 388
+           C 168 494, 178 585, 210 656
+           C 236 714, 270 762, 318 796
+           C 380 840, 452 862, 512 858
+           C 588 854, 664 826, 722 768
+           C 782 708, 826 618, 832 508
+           C 840 372, 800 252, 700 178
+           C 640 134, 572 116, 500 118 Z"
+        fill="#161616" stroke="#ecebe6" stroke-width="21" stroke-linejoin="round"/>
+
+  <!-- age spots on the crown -->
+  <g fill="#ecebe6" opacity="0.85">
+    <circle cx="452" cy="196" r="6"/>
+    <circle cx="512" cy="182" r="4"/>
+    <circle cx="560" cy="205" r="5"/>
+  </g>
+
+  <!-- last three loyal hairs -->
+  <g fill="none" stroke="#ecebe6" stroke-width="12" stroke-linecap="round">
+    <path d="M470 128 C 462 92, 476 66, 502 52"/>
+    <path d="M524 124 C 528 88, 550 70, 578 66"/>
+    <path d="M420 142 C 404 112, 404 92, 418 74"/>
+  </g>
+
+  <!-- mighty eyebrows: grey, overhanging the glasses -->
+  <g fill="#6e6b64" stroke="#ecebe6" stroke-width="10" stroke-linejoin="round">
+    <path d="M292 372 C 330 336, 420 328, 470 352 C 474 372, 462 382, 444 378 C 396 366, 330 372, 302 392 Z"/>
+    <path d="M556 348 C 606 326, 692 334, 728 368 C 720 390, 704 392, 686 384 C 646 366, 588 366, 564 376 Z"/>
+  </g>
+
+  <!-- round spectacles, slightly askew -->
+  <g fill="none" stroke="#ecebe6" stroke-width="15">
+    <circle cx="392" cy="474" r="88"/>
+    <circle cx="636" cy="466" r="86"/>
+    <path d="M478 462 C 502 448, 528 448, 552 456"/>
+    <path d="M304 460 C 268 452, 232 448, 206 452"/>
+    <path d="M722 452 C 758 442, 796 438, 822 444"/>
+  </g>
+
+  <!-- eyes: heavy lids, seen it all -->
+  <g stroke="#ecebe6" stroke-width="13" stroke-linecap="round" fill="none">
+    <path d="M352 470 C 372 458, 404 458, 428 468"/>
+    <path d="M598 462 C 618 450, 650 450, 672 460"/>
+  </g>
+  <g fill="#ecebe6">
+    <circle cx="394" cy="484" r="12"/>
+    <circle cx="638" cy="476" r="12"/>
+  </g>
+
+  <!-- nose: modest, tired -->
+  <path d="M506 470 C 500 512, 494 542, 486 560 C 502 572, 526 572, 542 562"
+        fill="none" stroke="#ecebe6" stroke-width="13" stroke-linecap="round"/>
+
+  <!-- THE BEARD. grey, vast, older than your monorepo -->
+  <path d="M232 594
+           C 200 680, 190 790, 216 890
+           C 240 984, 296 1074, 380 1128
+           C 428 1158, 492 1176, 544 1170
+           C 640 1158, 726 1096, 772 1002
+           C 814 916, 826 800, 802 700
+           C 792 656, 778 620, 762 594
+           C 742 640, 706 668, 664 680
+           C 610 696, 556 692, 512 678
+           C 468 692, 414 696, 360 682
+           C 316 670, 262 640, 232 594 Z"
+        fill="#a8a59d" stroke="#ecebe6" stroke-width="20" stroke-linejoin="round"/>
+
+  <!-- beard strands -->
+  <g fill="none" stroke="#6e6b64" stroke-width="11" stroke-linecap="round">
+    <path d="M300 726 C 296 812, 310 908, 352 986"/>
+    <path d="M382 756 C 376 852, 390 956, 428 1042"/>
+    <path d="M478 768 C 474 866, 480 972, 502 1076"/>
+    <path d="M578 764 C 586 860, 580 968, 552 1058"/>
+    <path d="M666 738 C 678 828, 668 928, 626 1010"/>
+    <path d="M730 700 C 746 786, 742 878, 712 950"/>
+  </g>
+  <!-- a couple of white lightning streaks in the grey -->
+  <g fill="none" stroke="#d8d6cf" stroke-width="9" stroke-linecap="round">
+    <path d="M430 780 C 426 870, 434 960, 460 1040"/>
+    <path d="M620 760 C 630 848, 622 940, 590 1016"/>
+  </g>
+
+  <!-- mustache over the beard top -->
+  <g fill="#6e6b64" stroke="#ecebe6" stroke-width="11" stroke-linejoin="round">
+    <path d="M512 600
+             C 466 584, 400 592, 362 622
+             C 356 642, 368 656, 390 654
+             C 434 648, 478 644, 510 650
+             C 544 644, 588 648, 630 656
+             C 652 658, 664 644, 658 624
+             C 622 592, 556 584, 512 600 Z"/>
+  </g>
+  <!-- the unimpressed mouth, barely visible under the mustache -->
+  <path d="M466 686 C 496 696, 532 696, 560 688"
+        fill="none" stroke="#ecebe6" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- ears -->
+  <g fill="#161616" stroke="#ecebe6" stroke-width="16">
+    <path d="M196 480 C 158 470, 140 508, 162 548 C 176 574, 200 584, 216 572"/>
+    <path d="M818 470 C 856 458, 878 494, 858 536 C 846 562, 822 574, 806 562"/>
+  </g>
+</svg>
