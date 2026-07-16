@@ -129,6 +129,40 @@ func parseSymbols(path, ext string) []string {
 	return syms
 }
 
+// testSourceSuffixes are unambiguous per-language test-file naming
+// conventions (case-insensitive). Java/Kotlin/C#/PHP use a PascalCase
+// Test/Tests suffix instead — handled separately, case-sensitively, so
+// "Latest.cs" doesn't false-positive on the lowercase substring "test".
+var testSourceSuffixes = []string{
+	"_test.go", "_test.py", "_test.rb", "_spec.rb",
+	".test.js", ".test.ts", ".test.jsx", ".test.tsx",
+	".spec.js", ".spec.ts", ".spec.jsx", ".spec.tsx",
+}
+
+// isTestSource reports whether a source file is test code by common
+// per-language naming convention. Declared "symbols" in test files are test
+// cases, benchmarks, and fixtures — not real API surface — and must not
+// pollute the Symbol graph, same principle ScanRefs already applies by
+// skipping _test.go on the reference-scanning side.
+func isTestSource(path string) bool {
+	base := filepath.Base(path)
+	lower := strings.ToLower(base)
+	for _, suf := range testSourceSuffixes {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	if strings.HasPrefix(lower, "test_") && strings.HasSuffix(lower, ".py") {
+		return true
+	}
+	for _, ext := range []string{".java", ".kt", ".cs", ".php"} {
+		if strings.HasSuffix(base, "Test"+ext) || strings.HasSuffix(base, "Tests"+ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // pomXML is the subset of a Maven pom.xml this cares about.
 type pomXML struct {
 	GroupID    string `xml:"groupId"`
@@ -207,7 +241,7 @@ func Repo(root string) Extraction {
 				return
 			}
 			ex.Endpoints = append(ex.Endpoints, eps...)
-		case symbolRes[ext] != nil:
+		case symbolRes[ext] != nil && !isTestSource(path):
 			ex.Symbols = append(ex.Symbols, parseSymbols(path, ext)...)
 		}
 	})

@@ -385,6 +385,29 @@ func TestExtractSymbolsRust(t *testing.T) {
 	}
 }
 
+func TestExtractSymbolsSkipsTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "orders.go"), []byte("package orders\n\nfunc CreateOrder() {}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "orders_test.go"),
+		[]byte("package orders\n\nimport \"testing\"\n\nfunc TestCreateOrder(t *testing.T) {}\nfunc BenchmarkParseOrder(b *testing.B) {}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "orders.py"), []byte("def create_order():\n    pass\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "test_orders.py"), []byte("def test_create_order():\n    pass\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "Latest.cs"), []byte("public class Latest {}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "OrderServiceTest.java"), []byte("public class OrderServiceTest {}\n"), 0o644)
+
+	ex := Repo(dir)
+	for _, want := range []string{"CreateOrder", "create_order", "Latest"} {
+		if !slices.Contains(ex.Symbols, want) {
+			t.Errorf("real symbol missing %q: %v", want, ex.Symbols)
+		}
+	}
+	for _, notWant := range []string{"TestCreateOrder", "BenchmarkParseOrder", "test_create_order", "OrderServiceTest"} {
+		if slices.Contains(ex.Symbols, notWant) {
+			t.Errorf("test-file declaration %q leaked into symbols: %v", notWant, ex.Symbols)
+		}
+	}
+}
+
 func TestExtractProto(t *testing.T) {
 	dir := t.TempDir()
 	proto := `syntax = "proto3";
