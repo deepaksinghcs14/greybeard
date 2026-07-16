@@ -54,6 +54,6 @@ Extraction is text-level and misses relationships you can verify while working â
 
 ## If the MCP tool isn't available
 
-The graph server may not be connected in every session. If the tool call fails or isn't in the tool list, say so plainly and offer to proceed without cross-repo awareness, rather than guessing at relationships from memory or repo naming conventions.
+The graph server may not be connected in every session. If the tool call fails or isn't in the tool list, say so plainly and offer to proceed without cross-repo awareness, rather than guessing at relationships from memory or repo naming conventions. The usual cause is that the `greybeard` binary isn't installed or isn't on PATH â€” offer the fix: `go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest` (or a prebuilt binary from the project's GitHub Releases), then restart the session.
 
 See `references/mcp-tools.md` for full tool signatures and `references/graph-schema.md` for the node/edge model if you need to reason about what the graph does and doesn't capture.
