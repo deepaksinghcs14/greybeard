@@ -1,137 +1,95 @@
-// Package graph stores and queries the cross-repo graph in Postgres +
-// Apache AGE. Node/edge model is defined in
-// skills/greybeard/references/graph-schema.md — keep the two in sync.
+// Package graph stores and queries the cross-repo graph in an embedded
+// SQLite database — zero setup, one file, no daemon. Node/edge model is
+// defined in skills/greybeard/references/graph-schema.md — keep the two in
+// sync. Nodes are typed tables; edges live in one table carrying their type,
+// and the depends_on rollup is a derived view over it.
 package graph
 
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"path/filepath"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	_ "modernc.org/sqlite"
 )
 
-const graphName = "greybeard"
-
-// Store wraps a pgx pool configured for AGE.
+// Store wraps the SQLite database.
 type Store struct {
-	pool *pgxpool.Pool
+	db *sql.DB
 }
 
-// Open connects to GREYBEARD_DB_URL (default: local greybeard database) and
-// bootstraps the AGE extension + graph if missing.
+const schema = `
+CREATE TABLE IF NOT EXISTS repos (
+	identity        TEXT PRIMARY KEY, -- normalized remote URL or absolute path
+	name            TEXT NOT NULL,
+	remote_url      TEXT NOT NULL DEFAULT '',
+	local_path      TEXT NOT NULL DEFAULT '',
+	last_indexed_at TEXT NOT NULL DEFAULT '', -- RFC3339, '' = never
+	modules         TEXT NOT NULL DEFAULT ''  -- comma-joined declared module/package names
+);
+CREATE TABLE IF NOT EXISTS endpoints (
+	repo   TEXT NOT NULL, -- owning repo identity
+	method TEXT NOT NULL,
+	path   TEXT NOT NULL,
+	PRIMARY KEY (repo, method, path)
+);
+CREATE TABLE IF NOT EXISTS schemas (
+	repo TEXT NOT NULL, -- defining repo identity
+	name TEXT NOT NULL,
+	PRIMARY KEY (repo, name)
+);
+CREATE TABLE IF NOT EXISTS packages (
+	repo        TEXT NOT NULL, -- providing repo identity
+	import_path TEXT NOT NULL,
+	PRIMARY KEY (repo, import_path)
+);
+CREATE TABLE IF NOT EXISTS edges (
+	from_repo   TEXT NOT NULL,
+	edge_type   TEXT NOT NULL, -- imports | calls_api | shares_schema
+	to_repo     TEXT NOT NULL, -- identity of the target node's owner
+	detail      TEXT NOT NULL, -- import path / "METHOD path" / schema name
+	method      TEXT NOT NULL DEFAULT '', -- calls_api only
+	path        TEXT NOT NULL DEFAULT '', -- calls_api only
+	access_mode TEXT NOT NULL DEFAULT '', -- shares_schema only: read | write
+	PRIMARY KEY (from_repo, edge_type, to_repo, detail)
+);
+-- The rolled-up Repo->Repo summary from the graph schema, derived rather
+-- than recomputed: every underlying edge already knows both repos.
+CREATE VIEW IF NOT EXISTS depends_on AS
+	SELECT DISTINCT from_repo, to_repo, edge_type, detail FROM edges WHERE from_repo <> to_repo;
+`
+
+// Open opens (creating if needed) the database at GREYBEARD_DB, default
+// ~/.greybeard/graph.db.
 func Open(ctx context.Context) (*Store, error) {
-	dsn := os.Getenv("GREYBEARD_DB_URL")
-	if dsn == "" {
-		dsn = "postgres://localhost:5432/greybeard?sslmode=disable"
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		return nil, err
-	}
-	// Simple protocol: AGE's cypher() doesn't play well with prepared
-	// statements, and text-format results let us scan agtype as strings.
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		_, err := conn.Exec(ctx, `LOAD 'age'; SET search_path = ag_catalog, "$user", public;`)
-		return err
-	}
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	s := &Store{pool: pool}
-	if err := s.bootstrap(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("cannot reach or bootstrap graph store at %s: %w", dsn, err)
-	}
-	return s, nil
-}
-
-func (s *Store) Close() { s.pool.Close() }
-
-func (s *Store) bootstrap(ctx context.Context) error {
-	if _, err := s.pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS age`); err != nil {
-		return err
-	}
-	var n int
-	if err := s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM ag_catalog.ag_graph WHERE name = '`+graphName+`'`).Scan(&n); err != nil {
-		return err
-	}
-	if n == 0 {
-		if _, err := s.pool.Exec(ctx, `SELECT ag_catalog.create_graph('`+graphName+`')`); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// cypher runs a cypher query and returns rows of unquoted agtype values.
-// cols must match the query's RETURN arity (use 1 for queries with no RETURN).
-func (s *Store) cypher(ctx context.Context, query string, cols int) ([][]string, error) {
-	if cols < 1 {
-		cols = 1
-	}
-	defs := make([]string, cols)
-	for i := range defs {
-		defs[i] = fmt.Sprintf("c%d agtype", i)
-	}
-	sqlText := fmt.Sprintf("SELECT * FROM ag_catalog.cypher('%s', $gb$ %s $gb$) AS (%s)",
-		graphName, query, strings.Join(defs, ", "))
-	rows, err := s.pool.Query(ctx, sqlText)
-	if err != nil {
-		return nil, fmt.Errorf("cypher %q: %w", query, err)
-	}
-	defer rows.Close()
-	var out [][]string
-	for rows.Next() {
-		raw := make([]sql.NullString, cols)
-		dest := make([]any, cols)
-		for i := range raw {
-			dest[i] = &raw[i]
-		}
-		if err := rows.Scan(dest...); err != nil {
+	path := os.Getenv("GREYBEARD_DB")
+	if path == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
 			return nil, err
 		}
-		row := make([]string, cols)
-		for i, r := range raw {
-			row[i] = agString(r.String)
-		}
-		out = append(out, row)
+		path = filepath.Join(home, ".greybeard", "graph.db")
 	}
-	return out, rows.Err()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	// WAL + busy_timeout: `greybeard serve` and a background `reindex` can
+	// touch the file concurrently from separate processes.
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cannot open graph store at %s: %w", path, err)
+	}
+	return &Store{db: db}, nil
 }
 
-// agString unwraps an agtype text value: JSON strings lose their quotes,
-// null becomes "".
-func agString(v string) string {
-	if v == "" || v == "null" {
-		return ""
-	}
-	if strings.HasPrefix(v, `"`) {
-		var s string
-		if json.Unmarshal([]byte(v), &s) == nil {
-			return s
-		}
-	}
-	return v
-}
-
-// lit quotes a string as a cypher literal. Values are inlined because AGE's
-// cypher() takes the query as a string, not bind parameters; this is a local
-// single-user store, not an untrusted-input boundary.
-func lit(s string) string {
-	s = strings.ReplaceAll(s, "$gb$", "") // guard the surrounding dollar-quote
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `'`, `\'`)
-	return "'" + s + "'"
-}
+func (s *Store) Close() { s.db.Close() }
 
 // StaleAfter returns the freshness threshold (GREYBEARD_STALE_AFTER, e.g.
 // "24h", default 24h).

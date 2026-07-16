@@ -1,10 +1,10 @@
 # greybeard — cross-repo context rules
 
-Apply these rules whenever a task in one repo might depend on, be depended on by, or share a schema/API contract with another repo — e.g. changing an endpoint, modifying a shared schema, checking "who else calls this", assessing blast radius of a change, or picking which repo owns a piece of functionality. Also trigger when the user asks about cross-repo dependencies, service relationships, "what depends on X", or wants a broader picture than the single open repo provides. This skill queries a graph knowledge base (Postgres + Apache AGE) via an MCP tool to pull in relationships the current repo alone can't show.
+Apply these rules whenever a task in one repo might depend on, be depended on by, or share a schema/API contract with another repo — e.g. changing an endpoint, modifying a shared schema, checking "who else calls this", assessing blast radius of a change, or picking which repo owns a piece of functionality. Also trigger when the user asks about cross-repo dependencies, service relationships, "what depends on X", or wants a broader picture than the single open repo provides. This skill queries a local graph knowledge base via an MCP tool to pull in relationships the current repo alone can't show.
 
 # Cross-repo context
 
-Claude Code normally only sees the repo it's working in. This skill fills that gap: a graph of relationships across all repos (dependency, API-call, schema-sharing, ownership) lives in a Postgres + Apache AGE store, exposed through an MCP server. Consult it before making a change whose impact might reach beyond the current repo.
+Claude Code normally only sees the repo it's working in. This skill fills that gap: a graph of relationships across all repos (dependency, API-call, schema-sharing, ownership) lives in a local embedded graph store (a single SQLite file), exposed through an MCP server. Consult it before making a change whose impact might reach beyond the current repo.
 
 ## When to use this
 

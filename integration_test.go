@@ -1,15 +1,12 @@
 // End-to-end test: init_root -> build -> all three query tools against two
-// fixture repos with a real cross-repo dependency, on a real Postgres + AGE
-// (docker run apache/age). Skips when Docker isn't available.
+// fixture repos with a real cross-repo dependency. The store is embedded
+// SQLite, so this runs everywhere with zero setup.
 package greybeard_test
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,43 +15,11 @@ import (
 )
 
 func TestEndToEnd(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short mode")
-	}
-	if err := exec.Command("docker", "info").Run(); err != nil {
-		t.Skip("docker not available; skipping integration test")
-	}
-
-	// --- Postgres + AGE ------------------------------------------------------
-	out, err := exec.Command("docker", "run", "-d", "--rm",
-		"-e", "POSTGRES_PASSWORD=greybeard",
-		"-p", "127.0.0.1:0:5432", "apache/age").Output()
-	if err != nil {
-		t.Fatalf("docker run apache/age: %v", err)
-	}
-	container := strings.TrimSpace(string(out))
-	t.Cleanup(func() { exec.Command("docker", "rm", "-f", container).Run() })
-
-	portOut, err := exec.Command("docker", "port", container, "5432/tcp").Output()
-	if err != nil {
-		t.Fatalf("docker port: %v", err)
-	}
-	hostPort := strings.TrimSpace(strings.SplitN(string(portOut), "\n", 2)[0])
-	t.Setenv("GREYBEARD_DB_URL",
-		fmt.Sprintf("postgres://postgres:greybeard@%s/postgres?sslmode=disable", hostPort))
-
+	t.Setenv("GREYBEARD_DB", filepath.Join(t.TempDir(), "graph.db"))
 	ctx := context.Background()
-	var st *graph.Store
-	deadline := time.Now().Add(120 * time.Second)
-	for {
-		st, err = graph.Open(ctx)
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("postgres never became ready: %v", err)
-		}
-		time.Sleep(2 * time.Second)
+	st, err := graph.Open(ctx)
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer st.Close()
 

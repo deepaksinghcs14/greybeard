@@ -1,6 +1,6 @@
 # Graph MCP tool signatures
 
-Assumes an MCP server (Go) backed by Postgres + Apache AGE.
+Assumes an MCP server (Go) backed by an embedded SQLite store.
 
 ## get_related_repos
 
@@ -48,4 +48,4 @@ These back the CLI/slash commands, not agent-facing reasoning queries — see th
 
 ## Query cost note
 
-`max_hops` beyond 2-3 can get slow on Apache AGE for dense graphs. Default to 1 hop; only widen when the task explicitly needs a broader blast-radius check.
+`max_hops` beyond 2-3 mostly adds noise on dense graphs — transitive edges pile up fast. Default to 1 hop; only widen when the task explicitly needs a broader blast-radius check.

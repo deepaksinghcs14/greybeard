@@ -11,7 +11,7 @@ import (
 // RepoRelation is one typed relationship reachable from a repo.
 type RepoRelation struct {
 	Repo     string `json:"repo"`
-	EdgeType string `json:"edge_type"` // imports | calls_api | shares_schema | depends_on
+	EdgeType string `json:"edge_type"` // imports | calls_api | shares_schema
 	Detail   string `json:"detail"`
 	Hops     int    `json:"hops"`
 }
@@ -30,8 +30,8 @@ type SchemaDependent struct {
 	TableOrType string `json:"table_or_type"`
 }
 
-// GetRelatedRepos walks depends_on edges (both directions) up to maxHops from
-// the given repo (short name or identity). Errors if the repo isn't
+// GetRelatedRepos walks the depends_on rollup (both directions) up to maxHops
+// from the given repo (short name or identity). Errors if the repo isn't
 // registered, so "unknown repo" never masquerades as "no dependencies".
 func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) ([]RepoRelation, error) {
 	rec, err := s.GetRepo(ctx, repo)
@@ -45,36 +45,60 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 		maxHops = 1
 	}
 
+	names := map[string]string{} // identity -> short name
+	repos, err := s.ListRepos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range repos {
+		names[r.Identity] = r.Name
+	}
+
 	visited := map[string]bool{rec.Identity: true}
 	frontier := []string{rec.Identity}
 	seen := map[string]bool{} // dedupe (repo, edge_type, detail) across directions
 	var out []RepoRelation
 
 	for hop := 1; hop <= maxHops && len(frontier) > 0; hop++ {
-		lits := make([]string, len(frontier))
-		for i, f := range frontier {
-			lits[i] = lit(f)
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(frontier)), ",")
+		args := make([]any, 0, len(frontier)*2)
+		for _, f := range frontier {
+			args = append(args, f)
 		}
-		q := `MATCH (a:Repo)-[d:depends_on]-(b:Repo)
-			WHERE a.identity IN [` + strings.Join(lits, ", ") + `]
-			RETURN b.identity, b.name, d.edge_type, d.detail`
-		rows, err := s.cypher(ctx, q, 4)
+		for _, f := range frontier {
+			args = append(args, f)
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT from_repo, to_repo, edge_type, detail FROM depends_on
+			WHERE from_repo IN (`+placeholders+`) OR to_repo IN (`+placeholders+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
+		inFrontier := map[string]bool{}
+		for _, f := range frontier {
+			inFrontier[f] = true
+		}
 		var next []string
-		for _, r := range rows {
-			bIdent, bName, edgeType, detail := r[0], r[1], r[2], r[3]
-			if visited[bIdent] {
-				continue // reached in a previous hop (or the origin itself)
+		for rows.Next() {
+			var from, to, edgeType, detail string
+			if err := rows.Scan(&from, &to, &edgeType, &detail); err != nil {
+				rows.Close()
+				return nil, err
 			}
-			key := bIdent + "|" + edgeType + "|" + detail
+			other := to
+			if !inFrontier[from] {
+				other = from
+			}
+			if visited[other] {
+				continue // reached in a previous hop, the origin, or an intra-frontier edge
+			}
+			key := other + "|" + edgeType + "|" + detail
 			if !seen[key] {
 				seen[key] = true
-				out = append(out, RepoRelation{Repo: bName, EdgeType: edgeType, Detail: detail, Hops: hop})
+				out = append(out, RepoRelation{Repo: names[other], EdgeType: edgeType, Detail: detail, Hops: hop})
 			}
-			next = append(next, bIdent)
+			next = append(next, other)
 		}
+		rows.Close()
 		// Mark visited only after the whole hop so a repo found twice in the
 		// same hop still records all its edge types.
 		for _, n := range next {
@@ -99,48 +123,70 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 		method, path = strings.ToUpper(m), strings.TrimSpace(p)
 	}
 
-	cond := `e.path = ` + lit(path)
+	q := `SELECT e.from_repo, e.detail FROM edges e WHERE e.edge_type = 'calls_api' AND e.path = ?`
+	args := []any{path}
 	if method != "" {
-		cond += ` AND e.method = ` + lit(method)
-	}
-	rows, err := s.cypher(ctx, `MATCH (r:Repo)-[c:calls_api]->(e:Endpoint)
-		WHERE `+cond+` RETURN r.name, c.detail`, 2)
-	if err != nil {
-		return nil, err
+		q += ` AND e.method = ?`
+		args = append(args, method)
 	}
 	var out []Caller
-	for _, r := range rows {
-		out = append(out, Caller{Repo: r[0], EdgeType: "calls_api", Detail: r[1]})
+	if err := s.collectCallers(ctx, &out, "calls_api", q, args...); err != nil {
+		return nil, err
 	}
 
-	rows, err = s.cypher(ctx, `MATCH (r:Repo)-[i:imports]->(p:Package)
-		WHERE p.import_path = `+lit(target)+` OR p.import_path STARTS WITH `+lit(target+"/")+`
-		RETURN r.name, p.import_path`, 2)
+	// imports: exact package match or a subpackage of the target.
+	err := s.collectCallers(ctx, &out, "imports",
+		`SELECT from_repo, detail FROM edges WHERE edge_type = 'imports'
+		 AND (detail = ?1 OR detail LIKE ?1 || '/%')`, target)
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range rows {
-		out = append(out, Caller{Repo: r[0], EdgeType: "imports", Detail: r[1]})
-	}
 	return out, nil
+}
+
+func (s *Store) collectCallers(ctx context.Context, out *[]Caller, edgeType, query string, args ...any) error {
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var identity, detail string
+		if err := rows.Scan(&identity, &detail); err != nil {
+			return err
+		}
+		name := identity
+		if r, err := s.GetRepo(ctx, identity); err == nil && r != nil {
+			name = r.Name
+		}
+		*out = append(*out, Caller{Repo: name, EdgeType: edgeType, Detail: detail})
+	}
+	return rows.Err()
 }
 
 // GetSchemaDependents finds repos that read/write a schema by name. A repo
 // that both defines (write) and references (read) it reports read_write.
 func (s *Store) GetSchemaDependents(ctx context.Context, schema string) ([]SchemaDependent, error) {
-	rows, err := s.cypher(ctx, `MATCH (r:Repo)-[e:shares_schema]->(sc:Schema)
-		WHERE sc.name = `+lit(schema)+` RETURN r.name, e.access_mode, sc.name`, 3)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.name, e.access_mode, e.detail
+		FROM edges e JOIN repos r ON r.identity = e.from_repo
+		WHERE e.edge_type = 'shares_schema' AND e.detail = ?`, schema)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	modes := map[string]map[string]bool{} // repo -> set of modes
-	names := map[string]string{}
-	for _, r := range rows {
-		if modes[r[0]] == nil {
-			modes[r[0]] = map[string]bool{}
+	for rows.Next() {
+		var repo, mode, name string
+		if err := rows.Scan(&repo, &mode, &name); err != nil {
+			return nil, err
 		}
-		modes[r[0]][r[1]] = true
-		names[r[0]] = r[2]
+		if modes[repo] == nil {
+			modes[repo] = map[string]bool{}
+		}
+		modes[repo][mode] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	var out []SchemaDependent
 	for repo, ms := range modes {
@@ -151,7 +197,7 @@ func (s *Store) GetSchemaDependents(ctx context.Context, schema string) ([]Schem
 		case ms["write"]:
 			mode = "write"
 		}
-		out = append(out, SchemaDependent{Repo: repo, AccessMode: mode, TableOrType: names[repo]})
+		out = append(out, SchemaDependent{Repo: repo, AccessMode: mode, TableOrType: schema})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Repo < out[j].Repo })
 	return out, nil
@@ -164,9 +210,9 @@ type AuditResult struct {
 	StaleRepos []StaleRepo `json:"stale_repos"` // extracted data older than the threshold
 }
 
-// StaleRepo names a repo whose extracted nodes/edges predate the freshness
-// threshold (edges carry no timestamps of their own — a repo's
-// last_indexed_at governs the age of everything extracted from it).
+// StaleRepo names a repo whose extracted rows predate the freshness threshold
+// (edges carry no timestamps of their own — a repo's last_indexed_at governs
+// the age of everything extracted from it).
 type StaleRepo struct {
 	Repo          string `json:"repo"`
 	LastIndexedAt string `json:"last_indexed_at,omitempty"` // "" = never indexed
@@ -181,19 +227,15 @@ func (s *Store) Audit(ctx context.Context, staleAfter time.Duration) (AuditResul
 	}
 	res.TotalRepos = len(repos)
 	for _, r := range repos {
-		total := 0
-		for _, label := range []string{"Endpoint", "Schema", "Package"} {
-			rows, err := s.cypher(ctx, `MATCH (n:`+label+` {repo: `+lit(r.Identity)+`}) RETURN count(n)`, 1)
-			if err != nil {
-				return res, err
-			}
-			total += atoi(rows[0][0])
-		}
-		rows, err := s.cypher(ctx, `MATCH (a:Repo {identity: `+lit(r.Identity)+`})-[e]->() RETURN count(e)`, 1)
+		var total int
+		err := s.db.QueryRowContext(ctx, `SELECT
+			(SELECT count(*) FROM endpoints WHERE repo = ?1) +
+			(SELECT count(*) FROM schemas   WHERE repo = ?1) +
+			(SELECT count(*) FROM packages  WHERE repo = ?1) +
+			(SELECT count(*) FROM edges     WHERE from_repo = ?1)`, r.Identity).Scan(&total)
 		if err != nil {
 			return res, err
 		}
-		total += atoi(rows[0][0])
 		if total == 0 {
 			res.EmptyRepos = append(res.EmptyRepos, r.Name)
 		}
@@ -210,12 +252,6 @@ func isHTTPMethod(s string) bool {
 		return true
 	}
 	return false
-}
-
-func atoi(s string) int {
-	n := 0
-	fmt.Sscanf(s, "%d", &n)
-	return n
 }
 
 func dedupeStrings(in []string) []string {

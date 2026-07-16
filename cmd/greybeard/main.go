@@ -26,7 +26,7 @@ Usage:
   greybeard check --cwd <path>   session-start freshness check (used by hooks)
 
 Configuration:
-  GREYBEARD_DB_URL       Postgres DSN (default postgres://localhost:5432/greybeard)
+  GREYBEARD_DB           graph database file (default ~/.greybeard/graph.db)
   GREYBEARD_STALE_AFTER  reindex threshold for check, e.g. 24h (default)
 `
 

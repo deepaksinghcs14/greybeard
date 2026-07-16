@@ -8,7 +8,7 @@ import (
 	"github.com/deepaksinghcs14/greybeard/internal/discover"
 )
 
-// RepoRecord is a registered repo as stored on its graph node.
+// RepoRecord is a registered repo row.
 type RepoRecord struct {
 	Identity      string   `json:"identity"`
 	Name          string   `json:"name"`
@@ -18,61 +18,60 @@ type RepoRecord struct {
 	Modules       []string `json:"modules,omitempty"`         // declared module/package names, set at index time
 }
 
-const repoReturn = `r.identity, r.name, r.remote_url, r.local_path, r.last_indexed_at, r.modules`
-
-func repoFromRow(row []string) RepoRecord {
-	rec := RepoRecord{
-		Identity: row[0], Name: row[1], RemoteURL: row[2],
-		LocalPath: row[3], LastIndexedAt: row[4],
-	}
-	if row[5] != "" {
-		rec.Modules = strings.Split(row[5], ",")
-	}
-	return rec
-}
-
-// UpsertRepo registers a repo node (or refreshes its name/paths) without
-// touching last_indexed_at.
+// UpsertRepo registers a repo (or refreshes its name/paths) without touching
+// last_indexed_at.
 func (s *Store) UpsertRepo(ctx context.Context, r discover.Repo) error {
-	if _, err := s.cypher(ctx, `MERGE (r:Repo {identity: `+lit(r.Identity)+`})`, 1); err != nil {
-		return err
-	}
-	_, err := s.cypher(ctx, `MATCH (r:Repo {identity: `+lit(r.Identity)+`})
-		SET r.name = `+lit(r.Name)+`, r.remote_url = `+lit(r.RemoteURL)+`, r.local_path = `+lit(r.LocalPath), 1)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO repos (identity, name, remote_url, local_path) VALUES (?, ?, ?, ?)
+		ON CONFLICT (identity) DO UPDATE SET name = excluded.name,
+			remote_url = excluded.remote_url, local_path = excluded.local_path`,
+		r.Identity, r.Name, r.RemoteURL, r.LocalPath)
 	return err
 }
 
 // SetIndexed stamps a repo as freshly extracted and records its declared
 // module/package names (used to match other repos' deps during reindex).
 func (s *Store) SetIndexed(ctx context.Context, identity string, at time.Time, modules []string) error {
-	_, err := s.cypher(ctx, `MATCH (r:Repo {identity: `+lit(identity)+`})
-		SET r.last_indexed_at = `+lit(at.UTC().Format(time.RFC3339))+`, r.modules = `+lit(strings.Join(modules, ",")), 1)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE repos SET last_indexed_at = ?, modules = ? WHERE identity = ?`,
+		at.UTC().Format(time.RFC3339), strings.Join(modules, ","), identity)
 	return err
 }
 
 // GetRepo looks a repo up by identity or short name. Returns nil if absent.
 func (s *Store) GetRepo(ctx context.Context, nameOrIdentity string) (*RepoRecord, error) {
-	rows, err := s.cypher(ctx, `MATCH (r:Repo)
-		WHERE r.identity = `+lit(nameOrIdentity)+` OR r.name = `+lit(nameOrIdentity)+`
-		RETURN `+repoReturn, 6)
+	rows, err := s.selectRepos(ctx, `WHERE identity = ?1 OR name = ?1`, nameOrIdentity)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	rec := repoFromRow(rows[0])
-	return &rec, nil
+	return &rows[0], nil
 }
 
 // ListRepos returns every registered repo.
 func (s *Store) ListRepos(ctx context.Context) ([]RepoRecord, error) {
-	rows, err := s.cypher(ctx, `MATCH (r:Repo) RETURN `+repoReturn, 6)
+	return s.selectRepos(ctx, "")
+}
+
+func (s *Store) selectRepos(ctx context.Context, where string, args ...any) ([]RepoRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT identity, name, remote_url, local_path, last_indexed_at, modules FROM repos `+where, args...)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]RepoRecord, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, repoFromRow(row))
+	defer rows.Close()
+	var out []RepoRecord
+	for rows.Next() {
+		var r RepoRecord
+		var modules string
+		if err := rows.Scan(&r.Identity, &r.Name, &r.RemoteURL, &r.LocalPath, &r.LastIndexedAt, &modules); err != nil {
+			return nil, err
+		}
+		if modules != "" {
+			r.Modules = strings.Split(modules, ",")
+		}
+		out = append(out, r)
 	}
-	return out, nil
+	return out, rows.Err()
 }
 
 // Stale reports whether a repo record needs (re-)extraction.

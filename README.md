@@ -21,7 +21,8 @@ globally-breaking change, and you find out in production.
    OpenAPI specs, `.proto` files, and SQL migrations into declared surface:
    packages, endpoints, schemas.
 2. **Store** — connects them into a typed graph (who imports what, who calls
-   what, who reads whose tables) in local Postgres + Apache AGE.
+   what, who reads whose tables) in an embedded SQLite file
+   (`~/.greybeard/graph.db`). Nothing to install, start, or babysit.
 3. **Serve** — exposes the graph to any MCP-speaking agent over stdio. No
    hosted service, no API keys, no telemetry. Everything stays on your machine.
 4. **Answer** — three narrow queries an agent asks before changing anything:
@@ -41,23 +42,14 @@ Inside Claude Code, the plugin adds `/greybeard-init`, `/greybeard-build`,
 
 ## Install
 
-**1. The binary:**
+**1. The binary** — that's the whole setup; storage is an embedded SQLite
+file greybeard creates itself:
 
 ```sh
 go install github.com/deepaksinghcs14/greybeard/cmd/greybeard@latest
 ```
 
-**2. The database** — local Postgres with Apache AGE. Easiest:
-
-```sh
-docker run -d --name greybeard-db -p 5432:5432 -e POSTGRES_PASSWORD=greybeard apache/age
-export GREYBEARD_DB_URL='postgres://postgres:greybeard@localhost:5432/postgres?sslmode=disable'
-```
-
-greybeard bootstraps the extension and graph itself on first run
-(`scripts/init-db.sql` does the same by hand if you prefer).
-
-**3. Claude Code:**
+**2. Claude Code:**
 
 ```
 /plugin marketplace add deepaksinghcs14/greybeard
@@ -68,7 +60,7 @@ That wires up the skill, the slash commands, the MCP server, and a
 session-start hook that keeps the current repo's graph data fresh
 automatically.
 
-**4. Codex:** copy the generated skill into Codex's skills directory and
+**3. Codex:** copy the generated skill into Codex's skills directory and
 register the MCP server:
 
 ```sh
@@ -82,7 +74,7 @@ codex mcp add greybeard -- greybeard serve
 into your always-on rules, and register `greybeard serve` as a stdio MCP
 server however your editor does that.
 
-**5. First index:**
+**4. First index:**
 
 ```sh
 greybeard init --root ~/code
@@ -154,14 +146,17 @@ for remoteless repos), so the same repo cloned twice is one node, not two.
 Freshness is per-repo via `last_indexed_at`; the session-start hook re-queues
 extraction for anything older than `GREYBEARD_STALE_AFTER` (default `24h`).
 
-## Why Postgres + AGE, not Neo4j
+## Why embedded SQLite, not a graph database
 
-You probably already run Postgres. AGE is an extension, not another always-on
-JVM service to babysit — one `docker run`, one `CREATE EXTENSION`, and the
-graph lives next to everything else you know how to back up, inspect with
-`psql`, and kill. Neo4j is a fine database; it's also a second database. For
-a local single-user tool, the graph model matters and the dedicated graph
-server doesn't.
+Because the graph is small and the queries are shallow. A few hundred repos
+produce a few thousand edges, and the three agent-facing queries are exact
+lookups plus a 1–3 hop walk — no workload that earns a Neo4j (or even a
+Postgres + Apache AGE) daemon to install, start, and babysit. SQLite is one
+file at `~/.greybeard/graph.db` (override with `GREYBEARD_DB`), created on
+first run, inspectable with the `sqlite3` CLI, backed up with `cp`. If your
+graph ever hits millions of edges with deep traversals, that's the ceiling
+where a real graph database starts paying rent; the storage layer is one
+small package if that day comes.
 
 ## What greybeard doesn't know
 
