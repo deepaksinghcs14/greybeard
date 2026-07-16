@@ -75,7 +75,7 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	s := server.NewMCPServer("greybeard", version)
 
 	s.AddTool(mcp.NewTool("get_related_repos",
-		mcp.WithDescription("Repos connected to the given repo via imports, calls_api, or shares_schema edges, up to max_hops away. Empty result usually means no known cross-repo ties — but check the caveat field first: if the queried repo hasn't been extracted yet, empty means unknown, not confirmed absent."),
+		mcp.WithDescription("Repos connected to the given repo via imports, calls_api, shares_schema, or calls_symbol edges, up to max_hops away. Empty result usually means no known cross-repo ties — but check the caveat field first: if the queried repo hasn't been extracted yet, empty means unknown, not confirmed absent."),
 		mcp.WithString("repo", mcp.Required(), mcp.Description("Repo short name (e.g. \"orders-svc\") or identity (e.g. \"github.com/acme/orders-svc\")")),
 		mcp.WithNumber("max_hops", mcp.Description("Blast-radius width, default 1. Beyond 2-3 gets slow on dense graphs.")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -91,7 +91,7 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	})
 
 	s.AddTool(mcp.NewTool("get_callers_of",
-		mcp.WithDescription("Reverse lookup: repos that call an endpoint (\"POST /orders\", \"/orders\", \"OrderService/Create\") or import a package path. Every result carries its edge_type. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
+		mcp.WithDescription("Reverse lookup: repos that call an endpoint (\"POST /orders\", \"/orders\", \"OrderService/Create\"), import a package path, or reference an exported symbol. Every result carries its edge_type. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
 		mcp.WithString("target", mcp.Required(), mcp.Description("Endpoint (optionally method-prefixed), exported symbol, or package path")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		target, err := req.RequireString("target")
@@ -124,8 +124,8 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		mcp.WithDescription("Record a cross-repo relationship you VERIFIED in code that extraction can't see (URL built from config, ORM table access). Requires evidence (file:line or snippet). Never record guesses — a false edge poisons every future blast-radius answer."),
 		mcp.WithString("from", mcp.Required(), mcp.Description("Repo that depends/calls/reads (short name or identity)")),
 		mcp.WithString("to", mcp.Required(), mcp.Description("Repo that owns the target (short name or identity)")),
-		mcp.WithString("edge_type", mcp.Required(), mcp.Description("imports | calls_api | shares_schema")),
-		mcp.WithString("detail", mcp.Required(), mcp.Description("What exactly: import path, \"POST /orders\", or table name")),
+		mcp.WithString("edge_type", mcp.Required(), mcp.Description("imports | calls_api | shares_schema | calls_symbol")),
+		mcp.WithString("detail", mcp.Required(), mcp.Description("What exactly: import path, \"POST /orders\", table name, or exported symbol name")),
 		mcp.WithString("access_mode", mcp.Description("shares_schema only: read | write | read_write (default read)")),
 		mcp.WithString("evidence", mcp.Required(), mcp.Description("Where you saw it: file:line and/or the code snippet")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
