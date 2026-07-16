@@ -199,9 +199,11 @@ capture:
   (`FROM orders`, `JOIN orders`), an endpoint path only on a line with a string
   literal, a proto message only inside `.proto` files. Same-name is not
   same-thing: a name a repo declares itself resolves locally, universal
-  endpoints (`/health`, `/metrics`) never link, and generic table names
-  (`users`, `messages`, ...) only link repos that already share an imports or
-  calls_api edge. Still text — treat hits as "worth checking," not proof.
+  endpoints (`/health`, `/metrics`) never link, and a schema-name match links
+  on its own only for a distinctive name within one org (same `github.com/org`
+  or parent directory) — generic names (`users`, `messages`, ...) and
+  cross-org matches both need an existing imports or calls_api edge as
+  corroboration. Still text — treat hits as "worth checking," not proof.
 
 ## License
 

@@ -406,21 +406,41 @@ func computeRefs(d declared, rest []declared) refPlan {
 	for _, cl := range p.calls {
 		corroborated[cl.owner] = true
 	}
+	// A name match may stand alone only within one org AND for a distinctive
+	// name; generic names and org boundaries both demand corroboration —
+	// unrelated projects reusing a table name is the norm, not sharing.
+	nameAlone := func(owner, name string, generic bool) bool {
+		return !generic && orgOf(owner) == orgOf(d.rec.Identity)
+	}
 
 	for t, mode := range tableHits {
 		for _, owner := range tableOwners[t] {
-			if extract.GenericTable(t) && !corroborated[owner] {
-				continue // "users" alone proves nothing about strangers
+			if !corroborated[owner] && !nameAlone(owner, t, extract.GenericTable(t)) {
+				continue
 			}
 			p.schemas = append(p.schemas, schemaRef{owner: owner, name: t, mode: mode})
 		}
 	}
 	for m := range msgHits {
 		for _, owner := range msgOwners[m] {
+			if !corroborated[owner] && !nameAlone(owner, m, false) {
+				continue
+			}
 			p.schemas = append(p.schemas, schemaRef{owner: owner, name: m, mode: "read"})
 		}
 	}
 	return p
+}
+
+// orgOf returns an identity's owner scope: host/org for remote-derived
+// identities (github.com/acme/repo -> github.com/acme), parent directory for
+// path identities. Repos in different scopes are strangers until proven
+// otherwise.
+func orgOf(identity string) string {
+	if i := strings.LastIndex(identity, "/"); i > 0 {
+		return identity[:i]
+	}
+	return identity
 }
 
 // applyRefs writes a plan's edges (and any Package rows imports need).

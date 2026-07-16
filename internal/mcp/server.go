@@ -107,9 +107,19 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	})
 
 	s.AddTool(mcp.NewTool("build_graph",
-		mcp.WithDescription("Full rebuild: re-extract every registered repo and repopulate all nodes/edges. Safe to rerun; not incremental."),
+		mcp.WithDescription("Full rebuild: re-extract every registered repo and repopulate all nodes/edges. Safe to rerun; not incremental. The result's progress_log lists per-repo outcomes (✓ extracted with counts, ✗ failed with reason) — relay it so the user sees which repos are covered."),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return asJSON(st.BuildAll(ctx, nil))
+		// MCP tools can't stream, so the per-repo progress lines ride along
+		// in the result for the agent to show.
+		var log []string
+		res, err := st.BuildAll(ctx, func(line string) { log = append(log, line) })
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return asJSON(struct {
+			graph.BuildResult
+			ProgressLog []string `json:"progress_log"`
+		}{res, log}, nil)
 	})
 
 	s.AddTool(mcp.NewTool("audit_graph",
