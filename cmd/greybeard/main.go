@@ -48,7 +48,6 @@ func main() {
 		os.Exit(2)
 	}
 	ctx := context.Background()
-	graph.BuilderVersion = version // extraction rows are stamped with the writer's version
 	var err error
 	switch os.Args[1] {
 	case "init":

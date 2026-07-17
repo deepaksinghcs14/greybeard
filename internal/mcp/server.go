@@ -4,11 +4,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
+	"syscall"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -189,27 +190,36 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		mcp.WithNumber("port", mcp.Description("Port for the local page, default 7333")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		port := req.GetInt("port", 7333)
-		// A bare dial can't tell a live greybeard from an outdated one (a
-		// visualize process survives binary swaps) or an unrelated app, so
-		// probe /healthz and walk forward past ports that answer wrong.
-		want := "greybeard " + version
+		// A bare dial can't tell a greybeard from an unrelated app squatting
+		// on the port, so probe /healthz. Any greybeard counts as running —
+		// it re-reads the store per request, and versions routinely differ
+		// mid-session (the binary self-updates under long-lived processes);
+		// spawning a sibling per version would leak a server on every call.
 		client := &http.Client{Timeout: 500 * time.Millisecond}
-		healthz := func(url string) (string, bool) {
+		healthz := func(url string) (body string, free bool) {
 			resp, err := client.Get(url + "/healthz")
 			if err != nil {
-				return "", false // nothing listening
+				// Only connection-refused proves nothing is listening. A
+				// timeout or a garbled response is some other process — the
+				// port is taken, never a spawn target.
+				return "", errors.Is(err, syscall.ECONNREFUSED)
 			}
 			defer resp.Body.Close()
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 128))
-			return strings.TrimSpace(string(body)), true
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, 128))
+			return strings.TrimSpace(string(b)), false
 		}
 		for p := port; p < port+10; p++ {
 			url := fmt.Sprintf("http://127.0.0.1:%d", p)
-			if body, listening := healthz(url); listening {
-				if body == want {
-					return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "already running"}`, url)), nil
+			body, free := healthz(url)
+			if strings.HasPrefix(body, "greybeard") {
+				note := ""
+				if body != "greybeard "+version {
+					note = `, "note": "server is from an older greybeard — data shown is live, but restart it to get the newest page"`
 				}
-				continue // occupied by an outdated greybeard or another app — leave it alone
+				return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "already running"%s}`, url, note)), nil
+			}
+			if !free {
+				continue // some other app owns this port — leave it alone
 			}
 			exe, err := os.Executable()
 			if err != nil {
@@ -221,15 +231,13 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 			if err := c.Start(); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			addr := fmt.Sprintf("127.0.0.1:%d", p)
 			for i := 0; i < 20; i++ { // wait for the listener, max ~2s
-				if conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
-					conn.Close()
-					break
+				if body, _ := healthz(url); strings.HasPrefix(body, "greybeard") {
+					return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "started", "note": "opened in the default browser; page reloads reflect the live graph"}`, url)), nil
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
-			return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "started", "note": "opened in the default browser; page reloads reflect the live graph"}`, url)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("spawned `greybeard visualize --port %d` but it never answered /healthz — check if the process is running", p)), nil
 		}
 		return mcp.NewToolResultError(fmt.Sprintf("ports %d-%d are all taken by other processes — pass a different port", port, port+9)), nil
 	})

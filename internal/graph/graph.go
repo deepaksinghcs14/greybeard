@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS repos (
 	local_path      TEXT NOT NULL DEFAULT '',
 	last_indexed_at TEXT NOT NULL DEFAULT '', -- RFC3339, '' = never
 	modules         TEXT NOT NULL DEFAULT '', -- comma-joined declared module/package names
-	indexed_by      TEXT NOT NULL DEFAULT ''  -- binary version that wrote the extraction
+	extractor_epoch INTEGER NOT NULL DEFAULT 0 -- ExtractorEpoch of the binary that wrote the extraction
 );
 CREATE TABLE IF NOT EXISTS endpoints (
 	repo   TEXT NOT NULL, -- owning repo identity
@@ -79,15 +79,19 @@ CREATE VIEW depends_on AS
 var migrations = []string{
 	`ALTER TABLE edges ADD COLUMN source TEXT NOT NULL DEFAULT 'scanned'`,
 	`ALTER TABLE edges ADD COLUMN evidence TEXT NOT NULL DEFAULT ''`,
-	`ALTER TABLE repos ADD COLUMN indexed_by TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE repos ADD COLUMN extractor_epoch INTEGER NOT NULL DEFAULT 0`,
 }
 
-// BuilderVersion is the running binary's version, set by main at startup.
-// Extraction rows are stamped with it; rows written by a different version
-// read as stale. This is what catches the upgrade gap a timestamp can't: a
-// pre-upgrade process writes "fresh" data that lacks whatever the new version
-// extracts (e.g. symbols), and every time-based check happily trusts it.
-var BuilderVersion = "dev"
+// ExtractorEpoch numbers the extraction capability set — bump it whenever
+// extraction learns to see something new (a node type, a language, a fixed
+// matcher), so rows written before the change read as stale and get rebuilt.
+// This catches the upgrade gap a timestamp can't: a pre-upgrade process
+// writes "fresh" data lacking what the new extractor finds (e.g. symbols).
+// Rows from a NEWER epoch read as fresh: an older long-lived process (the
+// MCP server survives binary self-updates) must trust newer data, not fight
+// the updated session hook in a rebuild ping-pong.
+// Epoch 1: symbols table + calls_symbol edges + working Kotlin extraction.
+const ExtractorEpoch = 1
 
 // Open opens (creating if needed) the database at GREYBEARD_DB, default
 // ~/.greybeard/graph.db.
