@@ -96,7 +96,7 @@ var symbolRes = map[string][]*regexp.Regexp{
 		// name, never the receiver type
 		regexp.MustCompile(`(?m)^(?:public\s+)?(?:(?:suspend|inline|infix|operator|tailrec|external)\s+)*fun\s+(?:<[^>\n]*>\s+)?(?:[\w.<>?]+\.)?(\w+)\s*\(`),
 	},
-	".cs":   {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".cs": {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
 	".php": {
 		regexp.MustCompile(`(?m)^\s*function\s+(\w+)\s*\(`),
 		regexp.MustCompile(`(?m)^\s*class\s+(\w+)`),
@@ -672,26 +672,52 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 	tableHits = map[string]string{}
 	messageHits = map[string]bool{}
 	symbolHits = map[string]bool{}
-	nameRe := func(kw, t string) *regexp.Regexp {
-		return regexp.MustCompile(`(?i)\b(` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
+
+	// One combined alternation regex per category, not one regex per needle:
+	// RE2 matches an N-way literal alternation in the same linear pass as a
+	// single literal, so a file is scanned once per category instead of once
+	// per table/message/symbol. At org scale (hundreds of pooled symbols)
+	// per-needle scanning made builds minutes slower — see BenchmarkScanRefs.
+	// The trailing \b keeps overlap semantics identical to per-needle
+	// matching: on "OrderService", the "Order" alternative fails the boundary
+	// and the engine falls through to "OrderService".
+	group := func(names []string) string {
+		quoted := make([]string, len(names))
+		for i, n := range names {
+			quoted[i] = regexp.QuoteMeta(n)
+		}
+		return "(" + strings.Join(quoted, "|") + ")"
 	}
-	readRes := make(map[string]*regexp.Regexp, len(tables))
-	writeRes := make(map[string]*regexp.Regexp, len(tables))
-	for _, t := range tables {
-		readRes[t] = nameRe(`from|join`, t)
-		writeRes[t] = nameRe(`insert\s+into|update|delete\s+from|merge\s+into|create\s+table(\s+if\s+not\s+exists)?`, t)
+	var readRe, writeRe, msgRe, symRe *regexp.Regexp
+	canonTable := map[string]string{} // lowercased capture -> needle as given ((?i) matches vary in case)
+	if len(tables) > 0 {
+		for _, t := range tables {
+			canonTable[strings.ToLower(t)] = t
+		}
+		g := group(tables)
+		quote := `["'` + "`" + `]`
+		readRe = regexp.MustCompile(`(?i)\b(?:from|join)[\s"'` + "`" + `]+` + qualPrefix + quote + `?` + g + `\b`)
+		writeRe = regexp.MustCompile(`(?i)\b(?:insert\s+into|update|delete\s+from|merge\s+into|create\s+table(?:\s+if\s+not\s+exists)?)[\s"'` + "`" + `]+` + qualPrefix + quote + `?` + g + `\b`)
 	}
-	messageRes := make(map[string]*regexp.Regexp, len(messages))
-	for _, m := range messages {
-		messageRes[m] = regexp.MustCompile(`\b` + regexp.QuoteMeta(m) + `\b`)
+	if len(messages) > 0 {
+		msgRe = regexp.MustCompile(`\b` + group(messages) + `\b`)
 	}
 	// word-boundary only, no call-site requirement (unlike paths, which need
 	// a quote) — genericity + org corroboration in computeRefs carries the
 	// precision burden instead, same as table names.
-	symRes := make(map[string]*regexp.Regexp, len(symbols))
-	for _, sym := range symbols {
-		symRes[sym] = regexp.MustCompile(`\b` + regexp.QuoteMeta(sym) + `\b`)
+	if len(symbols) > 0 {
+		symRe = regexp.MustCompile(`\b` + group(symbols) + `\b`)
 	}
+	// tables merge read/write across files; read+write = read_write
+	addMode := func(t, mode string) {
+		switch cur := tableHits[t]; {
+		case cur == "":
+			tableHits[t] = mode
+		case cur != mode && cur != "read_write":
+			tableHits[t] = "read_write"
+		}
+	}
+
 	walkSources(root, maxScanFileSize, func(path string) {
 		base := filepath.Base(path)
 		// test code references tables/endpoints/symbols via fixtures and
@@ -707,39 +733,36 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 		}
 		s := string(b)
 		isProto := strings.HasSuffix(strings.ToLower(path), ".proto")
-		for _, line := range strings.Split(s, "\n") {
-			if strings.ContainsAny(line, "\"'`") {
-				for _, p := range paths {
-					if !pathHits[p] && strings.Contains(line, p) {
-						pathHits[p] = true
+		if len(paths) > 0 {
+			// paths stay substring-per-line: they overlap ("/v1/orders" inside
+			// "/v1/orders/{id}") where an alternation would report only one,
+			// and the org's endpoint list is small enough not to matter.
+			for _, line := range strings.Split(s, "\n") {
+				if strings.ContainsAny(line, "\"'`") {
+					for _, p := range paths {
+						if !pathHits[p] && strings.Contains(line, p) {
+							pathHits[p] = true
+						}
 					}
 				}
 			}
 		}
-		for _, t := range tables {
-			if mode := tableHits[t]; mode != "read_write" {
-				read := strings.Contains(mode, "read") || readRes[t].MatchString(s)
-				write := strings.Contains(mode, "write") || writeRes[t].MatchString(s)
-				switch {
-				case read && write:
-					tableHits[t] = "read_write"
-				case write:
-					tableHits[t] = "write"
-				case read:
-					tableHits[t] = "read"
-				}
+		if readRe != nil {
+			for _, m := range readRe.FindAllStringSubmatch(s, -1) {
+				addMode(canonTable[strings.ToLower(m[1])], "read")
+			}
+			for _, m := range writeRe.FindAllStringSubmatch(s, -1) {
+				addMode(canonTable[strings.ToLower(m[1])], "write")
 			}
 		}
-		if isProto {
-			for m, re := range messageRes {
-				if !messageHits[m] && re.MatchString(s) {
-					messageHits[m] = true
-				}
+		if isProto && msgRe != nil {
+			for _, m := range msgRe.FindAllString(s, -1) {
+				messageHits[m] = true
 			}
 		}
-		for sym, re := range symRes {
-			if !symbolHits[sym] && re.MatchString(s) {
-				symbolHits[sym] = true
+		if symRe != nil {
+			for _, m := range symRe.FindAllString(s, -1) {
+				symbolHits[m] = true
 			}
 		}
 	})
