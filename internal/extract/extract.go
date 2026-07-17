@@ -83,9 +83,18 @@ var symbolRes = map[string][]*regexp.Regexp{
 	".java": {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
 	// Kotlin is public by default: no visibility keyword on most exported
 	// declarations, and top-level fun/object are first-class API surface.
+	// ponytail: text-level like every language here — `fun interface` and
+	// multiline signatures are out of scope; move to an AST if that bites.
 	".kt": {
-		regexp.MustCompile(`(?m)^(?:public\s+)?(?:data\s+|sealed\s+|abstract\s+|open\s+)*(?:class|interface|object|enum\s+class)\s+(\w+)`),
-		regexp.MustCompile(`(?m)^(?:public\s+)?(?:suspend\s+)?fun\s+(\w+)`),
+		// top-level types, public by default (anchored so private/internal
+		// and nested members don't match)
+		regexp.MustCompile(`(?m)^(?:public\s+)?(?:(?:data|sealed|abstract|open|value|annotation|enum)\s+)*(?:class|interface|object)\s+(\w+)`),
+		// explicitly-public types at any nesting depth
+		regexp.MustCompile(`(?m)^\s*public\s+(?:(?:data|sealed|abstract|open|value|annotation|enum)\s+)*(?:class|interface|object)\s+(\w+)`),
+		// top-level functions: modifiers, generics (`fun <T> name`), and
+		// extension receivers (`fun String.toSlug`) — capture the fun's own
+		// name, never the receiver type
+		regexp.MustCompile(`(?m)^(?:public\s+)?(?:(?:suspend|inline|infix|operator|tailrec|external)\s+)*fun\s+(?:<[^>\n]*>\s+)?(?:[\w.<>?]+\.)?(\w+)\s*\(`),
 	},
 	".cs":   {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
 	".php": {

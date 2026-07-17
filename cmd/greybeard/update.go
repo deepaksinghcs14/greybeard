@@ -58,12 +58,15 @@ func cmdUpdate(ctx context.Context, args []string) error {
 	if runtime.GOOS == "windows" {
 		asset += ".exe"
 	}
-	url := "https://github.com/" + releaseRepo + "/releases/latest/download/" + asset
+	// Pinned to the tag, not the mutable /latest alias: a release published
+	// mid-update would otherwise pair one release's checksums.txt with
+	// another's binary and fail as a spurious "checksum mismatch".
+	url := "https://github.com/" + releaseRepo + "/releases/download/v" + latest + "/" + asset
 
 	// Same integrity bar as the bootstrap script: the binary must match the
 	// release's checksums.txt before it replaces the running one — the daily
 	// silent auto-update runs this exact path.
-	wantSum, err := releaseChecksum(ctx, asset)
+	wantSum, err := releaseChecksum(ctx, latest, asset)
 	if err != nil {
 		return fmt.Errorf("fetching release checksums: %w", err)
 	}
@@ -76,18 +79,11 @@ func cmdUpdate(ctx context.Context, args []string) error {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpGet(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s: %s", url, resp.Status)
-	}
 
 	// Stage next to the target so the final rename is atomic (same filesystem).
 	staged := exe + ".new"
@@ -128,22 +124,32 @@ func cmdUpdate(ctx context.Context, args []string) error {
 	return nil
 }
 
-// releaseChecksum returns the expected sha256 (hex) for an asset from the
-// latest release's checksums.txt (goreleaser format: "<hex>  <name>").
-func releaseChecksum(ctx context.Context, asset string) (string, error) {
-	url := "https://github.com/" + releaseRepo + "/releases/latest/download/checksums.txt"
+// httpGet issues a GET and errors on any non-200, returning an open body
+// otherwise — the caller closes it.
+func httpGet(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("download %s: %s", url, resp.Status)
+	}
+	return resp, nil
+}
+
+// releaseChecksum returns the expected sha256 (hex) for an asset from the
+// tagged release's checksums.txt (goreleaser format: "<hex>  <name>").
+func releaseChecksum(ctx context.Context, tag, asset string) (string, error) {
+	resp, err := httpGet(ctx, "https://github.com/"+releaseRepo+"/releases/download/v"+tag+"/checksums.txt")
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download %s: %s", url, resp.Status)
-	}
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())

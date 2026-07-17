@@ -43,10 +43,12 @@ func TestStaleOrUnindexedCount(t *testing.T) {
 	}
 }
 
-// A fresh timestamp written by a different binary version must still read as
-// stale — a pre-upgrade process can stamp "fresh" data that lacks whatever
-// the new version extracts (the empty-symbols-table failure mode).
-func TestVersionSkewIsStale(t *testing.T) {
+// A fresh timestamp written by an older extractor epoch must still read as
+// stale (the empty-symbols-table failure mode: a pre-upgrade process stamps
+// "fresh" data lacking what the new extractor finds). Rows from a NEWER
+// epoch must read as fresh, so an old long-lived server doesn't fight the
+// updated session hook in a rebuild ping-pong.
+func TestExtractorEpochStaleness(t *testing.T) {
 	t.Setenv("GREYBEARD_DB", filepath.Join(t.TempDir(), "graph.db"))
 	ctx := context.Background()
 	st, err := Open(ctx)
@@ -59,35 +61,39 @@ func TestVersionSkewIsStale(t *testing.T) {
 	if err := st.UpsertRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-
-	old := BuilderVersion
-	defer func() { BuilderVersion = old }()
-
-	BuilderVersion = "0.3.0"
 	if err := st.SetIndexed(ctx, repo.Identity, time.Now(), nil); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := st.GetRepo(ctx, repo.Identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Stale(24 * time.Hour) {
-		t.Error("same-version fresh record should not be stale")
+
+	stale := func(wantStale bool, wantCount int, context string) {
+		t.Helper()
+		rec, err := st.GetRepo(ctx, repo.Identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Stale(24*time.Hour) != wantStale {
+			t.Errorf("%s: Stale = %v, want %v", context, !wantStale, wantStale)
+		}
+		n, err := st.StaleOrUnindexedCount(ctx, 24*time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n != wantCount {
+			t.Errorf("%s: StaleOrUnindexedCount = %d, want %d", context, n, wantCount)
+		}
 	}
 
-	BuilderVersion = "0.3.1" // the binary upgraded; the rows didn't
-	rec, err = st.GetRepo(ctx, repo.Identity)
-	if err != nil {
+	stale(false, 0, "current epoch, fresh timestamp")
+
+	// Simulate rows written by a pre-epoch binary (migration default 0).
+	if _, err := st.db.ExecContext(ctx, `UPDATE repos SET extractor_epoch = ?`, ExtractorEpoch-1); err != nil {
 		t.Fatal(err)
 	}
-	if !rec.Stale(24 * time.Hour) {
-		t.Error("record written by an older binary version should be stale despite a fresh timestamp")
-	}
-	n, err := st.StaleOrUnindexedCount(ctx, 24*time.Hour)
-	if err != nil {
+	stale(true, 1, "older epoch despite fresh timestamp")
+
+	// Rows from a newer epoch (this process is the outdated one): fresh.
+	if _, err := st.db.ExecContext(ctx, `UPDATE repos SET extractor_epoch = ?`, ExtractorEpoch+1); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("StaleOrUnindexedCount = %d, want 1 (version-skewed repo)", n)
-	}
+	stale(false, 0, "newer epoch must not read as stale")
 }

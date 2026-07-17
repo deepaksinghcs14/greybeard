@@ -354,23 +354,29 @@ func TestExtractSymbolsKotlin(t *testing.T) {
 	src := "package com.acme.orders\n\n" +
 		"class OrderService {\n    fun placeOrder() {}\n}\n\n" +
 		"data class Order(val id: String)\n\n" +
-		"object OrderRegistry\n\n" +
+		"object OrderRegistry {\n    public class Config\n}\n\n" +
 		"interface OrderRepository\n\n" +
 		"enum class OrderState { OPEN, CLOSED }\n\n" +
 		"fun createOrder(): Order = Order(\"x\")\n\n" +
 		"suspend fun fetchOrder(id: String): Order = Order(id)\n\n" +
+		"inline fun retry(block: () -> Unit) = block()\n\n" +
+		"fun <T> cached(f: () -> T): T = f()\n\n" +
+		"fun String.toSlug(): String = lowercase()\n\n" +
 		"private fun internalHelper() {}\n\n" +
 		"private class InternalCache\n"
 	os.WriteFile(filepath.Join(dir, "Orders.kt"), []byte(src), 0o644)
 	ex := Repo(dir)
-	for _, want := range []string{"OrderService", "Order", "OrderRegistry", "OrderRepository", "OrderState", "createOrder", "fetchOrder"} {
+	for _, want := range []string{"OrderService", "Order", "OrderRegistry", "Config", "OrderRepository", "OrderState",
+		"createOrder", "fetchOrder", "retry", "cached", "toSlug"} {
 		if !slices.Contains(ex.Symbols, want) {
 			t.Errorf("symbols missing %q: %v", want, ex.Symbols)
 		}
 	}
-	for _, notWant := range []string{"internalHelper", "InternalCache", "placeOrder"} {
+	// String is a receiver type, not a declared symbol — extracting it would
+	// seed a bogus calls_symbol edge from every repo that says "String".
+	for _, notWant := range []string{"internalHelper", "InternalCache", "placeOrder", "String"} {
 		if slices.Contains(ex.Symbols, notWant) {
-			t.Errorf("%q should not be a symbol (private or nested): %v", notWant, ex.Symbols)
+			t.Errorf("%q should not be a symbol (private, nested, or a receiver type): %v", notWant, ex.Symbols)
 		}
 	}
 }

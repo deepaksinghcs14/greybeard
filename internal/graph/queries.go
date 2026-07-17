@@ -237,9 +237,9 @@ type AuditResult struct {
 // (edges carry no timestamps of their own — a repo's last_indexed_at governs
 // the age of everything extracted from it).
 type StaleRepo struct {
-	Repo          string `json:"repo"`
-	LastIndexedAt string `json:"last_indexed_at,omitempty"` // "" = never indexed
-	IndexedBy     string `json:"indexed_by,omitempty"`      // explains recent-timestamp-but-stale: an older binary wrote it
+	Repo           string `json:"repo"`
+	LastIndexedAt  string `json:"last_indexed_at,omitempty"` // "" = never indexed
+	ExtractorEpoch int    `json:"extractor_epoch,omitempty"` // explains recent-timestamp-but-stale: an older extractor wrote it
 }
 
 // Audit is read-only: it inspects the graph and never mutates it.
@@ -265,7 +265,7 @@ func (s *Store) Audit(ctx context.Context, staleAfter time.Duration) (AuditResul
 			res.EmptyRepos = append(res.EmptyRepos, r.Name)
 		}
 		if r.Stale(staleAfter) {
-			res.StaleRepos = append(res.StaleRepos, StaleRepo{Repo: r.Name, LastIndexedAt: r.LastIndexedAt, IndexedBy: r.IndexedBy})
+			res.StaleRepos = append(res.StaleRepos, StaleRepo{Repo: r.Name, LastIndexedAt: r.LastIndexedAt, ExtractorEpoch: r.ExtractorEpoch})
 		}
 	}
 	return res, nil
@@ -280,8 +280,8 @@ func (s *Store) StaleOrUnindexedCount(ctx context.Context, staleAfter time.Durat
 	cutoff := time.Now().Add(-staleAfter).UTC().Format(time.RFC3339) // RFC3339 sorts lexicographically
 	var n int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM repos WHERE last_indexed_at = '' OR last_indexed_at < ? OR indexed_by <> ?`,
-		cutoff, BuilderVersion).Scan(&n)
+		`SELECT count(*) FROM repos WHERE last_indexed_at = '' OR last_indexed_at < ? OR extractor_epoch < ?`,
+		cutoff, ExtractorEpoch).Scan(&n)
 	return n, err
 }
 
