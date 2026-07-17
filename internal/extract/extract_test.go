@@ -349,6 +349,32 @@ func TestExtractSymbolsPython(t *testing.T) {
 	}
 }
 
+func TestExtractSymbolsKotlin(t *testing.T) {
+	dir := t.TempDir()
+	src := "package com.acme.orders\n\n" +
+		"class OrderService {\n    fun placeOrder() {}\n}\n\n" +
+		"data class Order(val id: String)\n\n" +
+		"object OrderRegistry\n\n" +
+		"interface OrderRepository\n\n" +
+		"enum class OrderState { OPEN, CLOSED }\n\n" +
+		"fun createOrder(): Order = Order(\"x\")\n\n" +
+		"suspend fun fetchOrder(id: String): Order = Order(id)\n\n" +
+		"private fun internalHelper() {}\n\n" +
+		"private class InternalCache\n"
+	os.WriteFile(filepath.Join(dir, "Orders.kt"), []byte(src), 0o644)
+	ex := Repo(dir)
+	for _, want := range []string{"OrderService", "Order", "OrderRegistry", "OrderRepository", "OrderState", "createOrder", "fetchOrder"} {
+		if !slices.Contains(ex.Symbols, want) {
+			t.Errorf("symbols missing %q: %v", want, ex.Symbols)
+		}
+	}
+	for _, notWant := range []string{"internalHelper", "InternalCache", "placeOrder"} {
+		if slices.Contains(ex.Symbols, notWant) {
+			t.Errorf("%q should not be a symbol (private or nested): %v", notWant, ex.Symbols)
+		}
+	}
+}
+
 func TestExtractSymbolsJavaScript(t *testing.T) {
 	dir := t.TempDir()
 	src := "export function createOrder() {}\n" +

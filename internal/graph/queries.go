@@ -11,7 +11,7 @@ import (
 // RepoRelation is one typed relationship reachable from a repo.
 type RepoRelation struct {
 	Repo     string `json:"repo"`
-	EdgeType string `json:"edge_type"` // imports | calls_api | shares_schema
+	EdgeType string `json:"edge_type"` // imports | calls_api | shares_schema | calls_symbol
 	Detail   string `json:"detail"`
 	Hops     int    `json:"hops"`
 	Source   string `json:"source"`             // scanned (extraction) | agent (verified observation)
@@ -239,6 +239,7 @@ type AuditResult struct {
 type StaleRepo struct {
 	Repo          string `json:"repo"`
 	LastIndexedAt string `json:"last_indexed_at,omitempty"` // "" = never indexed
+	IndexedBy     string `json:"indexed_by,omitempty"`      // explains recent-timestamp-but-stale: an older binary wrote it
 }
 
 // Audit is read-only: it inspects the graph and never mutates it.
@@ -264,7 +265,7 @@ func (s *Store) Audit(ctx context.Context, staleAfter time.Duration) (AuditResul
 			res.EmptyRepos = append(res.EmptyRepos, r.Name)
 		}
 		if r.Stale(staleAfter) {
-			res.StaleRepos = append(res.StaleRepos, StaleRepo{Repo: r.Name, LastIndexedAt: r.LastIndexedAt})
+			res.StaleRepos = append(res.StaleRepos, StaleRepo{Repo: r.Name, LastIndexedAt: r.LastIndexedAt, IndexedBy: r.IndexedBy})
 		}
 	}
 	return res, nil
@@ -279,7 +280,8 @@ func (s *Store) StaleOrUnindexedCount(ctx context.Context, staleAfter time.Durat
 	cutoff := time.Now().Add(-staleAfter).UTC().Format(time.RFC3339) // RFC3339 sorts lexicographically
 	var n int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM repos WHERE last_indexed_at = '' OR last_indexed_at < ?`, cutoff).Scan(&n)
+		`SELECT count(*) FROM repos WHERE last_indexed_at = '' OR last_indexed_at < ? OR indexed_by <> ?`,
+		cutoff, BuilderVersion).Scan(&n)
 	return n, err
 }
 

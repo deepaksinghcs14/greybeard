@@ -16,7 +16,7 @@ get_related_repos(repo: string, max_hops: int = 1) -> { results: RepoRelation[],
 
 RepoRelation {
   repo:        string   // related repo name
-  edge_type:   string   // "imports" | "calls_api" | "shares_schema"
+  edge_type:   string   // "imports" | "calls_api" | "shares_schema" | "calls_symbol"
   detail:      string   // e.g. package path, endpoint, schema/table name
   hops:        int
   source:      string   // "scanned" (extraction) | "agent" (verified observation)

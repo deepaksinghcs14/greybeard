@@ -15,6 +15,7 @@ type RepoRecord struct {
 	RemoteURL     string   `json:"remote_url,omitempty"`
 	LocalPath     string   `json:"local_path"`
 	LastIndexedAt string   `json:"last_indexed_at,omitempty"` // RFC3339, "" = never
+	IndexedBy     string   `json:"indexed_by,omitempty"`      // binary version that wrote the extraction
 	Modules       []string `json:"modules,omitempty"`         // declared module/package names, set at index time
 }
 
@@ -39,8 +40,8 @@ func (s *Store) SetIndexed(ctx context.Context, identity string, at time.Time, m
 // freshness inside the same transaction that writes the edges.
 func setIndexedIn(ctx context.Context, x dbtx, identity string, at time.Time, modules []string) error {
 	_, err := x.ExecContext(ctx,
-		`UPDATE repos SET last_indexed_at = ?, modules = ? WHERE identity = ?`,
-		at.UTC().Format(time.RFC3339), strings.Join(modules, ","), identity)
+		`UPDATE repos SET last_indexed_at = ?, modules = ?, indexed_by = ? WHERE identity = ?`,
+		at.UTC().Format(time.RFC3339), strings.Join(modules, ","), BuilderVersion, identity)
 	return err
 }
 
@@ -60,7 +61,7 @@ func (s *Store) ListRepos(ctx context.Context) ([]RepoRecord, error) {
 
 func (s *Store) selectRepos(ctx context.Context, where string, args ...any) ([]RepoRecord, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT identity, name, remote_url, local_path, last_indexed_at, modules FROM repos `+where, args...)
+		`SELECT identity, name, remote_url, local_path, last_indexed_at, indexed_by, modules FROM repos `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +70,7 @@ func (s *Store) selectRepos(ctx context.Context, where string, args ...any) ([]R
 	for rows.Next() {
 		var r RepoRecord
 		var modules string
-		if err := rows.Scan(&r.Identity, &r.Name, &r.RemoteURL, &r.LocalPath, &r.LastIndexedAt, &modules); err != nil {
+		if err := rows.Scan(&r.Identity, &r.Name, &r.RemoteURL, &r.LocalPath, &r.LastIndexedAt, &r.IndexedBy, &modules); err != nil {
 			return nil, err
 		}
 		if modules != "" {
@@ -80,9 +81,11 @@ func (s *Store) selectRepos(ctx context.Context, where string, args ...any) ([]R
 	return out, rows.Err()
 }
 
-// Stale reports whether a repo record needs (re-)extraction.
+// Stale reports whether a repo record needs (re-)extraction: never indexed,
+// older than the threshold, or written by a different binary version (whose
+// extraction surface may lack what the current version knows to look for).
 func (r *RepoRecord) Stale(threshold time.Duration) bool {
-	if r.LastIndexedAt == "" {
+	if r.LastIndexedAt == "" || r.IndexedBy != BuilderVersion {
 		return true
 	}
 	t, err := time.Parse(time.RFC3339, r.LastIndexedAt)

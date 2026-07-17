@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,30 +189,49 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 		mcp.WithNumber("port", mcp.Description("Port for the local page, default 7333")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		port := req.GetInt("port", 7333)
-		url := fmt.Sprintf("http://127.0.0.1:%d", port)
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		if conn, err := net.DialTimeout("tcp", addr, 300*time.Millisecond); err == nil {
-			conn.Close() // already serving (or the port is taken — the URL will tell)
-			return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "already running"}`, url)), nil
-		}
-		exe, err := os.Executable()
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		c := exec.Command(exe, "visualize", "--port", strconv.Itoa(port))
-		c.Stdout, c.Stderr = nil, nil
-		spawn.Detach(c) // outlives this MCP server; user closes it from the terminal or it dies with logout
-		if err := c.Start(); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		for i := 0; i < 20; i++ { // wait for the listener, max ~2s
-			if conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
-				conn.Close()
-				break
+		// A bare dial can't tell a live greybeard from an outdated one (a
+		// visualize process survives binary swaps) or an unrelated app, so
+		// probe /healthz and walk forward past ports that answer wrong.
+		want := "greybeard " + version
+		client := &http.Client{Timeout: 500 * time.Millisecond}
+		healthz := func(url string) (string, bool) {
+			resp, err := client.Get(url + "/healthz")
+			if err != nil {
+				return "", false // nothing listening
 			}
-			time.Sleep(100 * time.Millisecond)
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 128))
+			return strings.TrimSpace(string(body)), true
 		}
-		return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "started", "note": "opened in the default browser; page reloads reflect the live graph"}`, url)), nil
+		for p := port; p < port+10; p++ {
+			url := fmt.Sprintf("http://127.0.0.1:%d", p)
+			if body, listening := healthz(url); listening {
+				if body == want {
+					return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "already running"}`, url)), nil
+				}
+				continue // occupied by an outdated greybeard or another app — leave it alone
+			}
+			exe, err := os.Executable()
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			c := exec.Command(exe, "visualize", "--port", strconv.Itoa(p))
+			c.Stdout, c.Stderr = nil, nil
+			spawn.Detach(c) // outlives this MCP server; user closes it from the terminal or it dies with logout
+			if err := c.Start(); err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			addr := fmt.Sprintf("127.0.0.1:%d", p)
+			for i := 0; i < 20; i++ { // wait for the listener, max ~2s
+				if conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond); err == nil {
+					conn.Close()
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			return mcp.NewToolResultText(fmt.Sprintf(`{"url": %q, "status": "started", "note": "opened in the default browser; page reloads reflect the live graph"}`, url)), nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("ports %d-%d are all taken by other processes — pass a different port", port, port+9)), nil
 	})
 
 	s.AddTool(mcp.NewTool("audit_graph",
