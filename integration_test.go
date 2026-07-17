@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +125,11 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if len(callers) != 1 || callers[0].Repo != "billing-svc" || callers[0].EdgeType != "calls_api" {
 		t.Errorf("callers of POST /orders = %+v", callers)
+	}
+	// local_path is what lets an agent offer the coordinated change in the
+	// dependent repo — it must point at the caller's checkout.
+	if len(callers) == 1 && !strings.HasSuffix(callers[0].LocalPath, "billing-svc") {
+		t.Errorf("caller local_path = %q, want the billing-svc checkout", callers[0].LocalPath)
 	}
 	callers, err = st.GetCallersOf(ctx, "example.com/orders-svc")
 	if err != nil {

@@ -16,6 +16,7 @@ get_related_repos(repo: string, max_hops: int = 1) -> { results: RepoRelation[],
 
 RepoRelation {
   repo:        string   // related repo name
+  local_path:  string   // the related repo's checkout on this machine — where a coordinated change goes
   edge_type:   string   // "imports" | "calls_api" | "shares_schema" | "calls_symbol"
   detail:      string   // e.g. package path, endpoint, schema/table name
   hops:        int
@@ -41,6 +42,7 @@ get_callers_of(target: string) -> { results: Caller[], caveat?: string }
 
 Caller {
   repo:        string
+  local_path:  string   // the caller's checkout on this machine — where a coordinated change goes
   edge_type:   string   // "calls_api" | "imports" | "calls_symbol"
   detail:      string
   source:      string
@@ -58,6 +60,7 @@ get_schema_dependents(schema: string) -> { results: SchemaDependent[], caveat?: 
 
 SchemaDependent {
   repo:        string
+  local_path:  string   // the dependent's checkout on this machine — where a coordinated change goes
   access_mode: string   // "read" | "write" | "read_write"
   table_or_type: string
   source:      string   // if both a scanned and an agent edge exist for this repo, agent wins

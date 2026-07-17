@@ -1,6 +1,6 @@
 {
   "name": "greybeard",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Local cross-repo graph so your agent knows what depends on what before it changes anything.",
   "author": { "name": "deepaksinghcs14" },
   "license": "MIT",
