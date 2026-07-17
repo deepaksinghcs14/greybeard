@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS repos (
 	remote_url      TEXT NOT NULL DEFAULT '',
 	local_path      TEXT NOT NULL DEFAULT '',
 	last_indexed_at TEXT NOT NULL DEFAULT '', -- RFC3339, '' = never
-	modules         TEXT NOT NULL DEFAULT ''  -- comma-joined declared module/package names
+	modules         TEXT NOT NULL DEFAULT '', -- comma-joined declared module/package names
+	indexed_by      TEXT NOT NULL DEFAULT ''  -- binary version that wrote the extraction
 );
 CREATE TABLE IF NOT EXISTS endpoints (
 	repo   TEXT NOT NULL, -- owning repo identity
@@ -78,7 +79,15 @@ CREATE VIEW depends_on AS
 var migrations = []string{
 	`ALTER TABLE edges ADD COLUMN source TEXT NOT NULL DEFAULT 'scanned'`,
 	`ALTER TABLE edges ADD COLUMN evidence TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE repos ADD COLUMN indexed_by TEXT NOT NULL DEFAULT ''`,
 }
+
+// BuilderVersion is the running binary's version, set by main at startup.
+// Extraction rows are stamped with it; rows written by a different version
+// read as stale. This is what catches the upgrade gap a timestamp can't: a
+// pre-upgrade process writes "fresh" data that lacks whatever the new version
+// extracts (e.g. symbols), and every time-based check happily trusts it.
+var BuilderVersion = "dev"
 
 // Open opens (creating if needed) the database at GREYBEARD_DB, default
 // ~/.greybeard/graph.db.

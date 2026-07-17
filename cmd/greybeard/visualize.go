@@ -34,6 +34,12 @@ func cmdVisualize(ctx context.Context, args []string) error {
 	defer st.Close()
 
 	mux := http.NewServeMux()
+	// Lets the MCP server tell a live, current greybeard apart from an
+	// outdated one (or an unrelated app) squatting on the port.
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, "greybeard "+version)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		data, err := st.Snapshot(r.Context())
 		if err != nil {
