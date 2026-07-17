@@ -78,7 +78,7 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	s := server.NewMCPServer("greybeard", version)
 
 	s.AddTool(mcp.NewTool("get_related_repos",
-		mcp.WithDescription("Repos connected to the given repo via imports, calls_api, shares_schema, or calls_symbol edges, up to max_hops away. Empty result usually means no known cross-repo ties — but check the caveat field first: if the queried repo hasn't been extracted yet, empty means unknown, not confirmed absent."),
+		mcp.WithDescription("Repos connected to the given repo via imports, calls_api, shares_schema, or calls_symbol edges, up to max_hops away. Empty result usually means no known cross-repo ties — but check the caveat field first: if the queried repo hasn't been extracted yet, empty means unknown, not confirmed absent. Each result carries the related repo's local_path (its checkout on this machine): if the user's change breaks that repo, offer to update it there too — with their explicit go-ahead, never silently."),
 		mcp.WithString("repo", mcp.Required(), mcp.Description("Repo short name (e.g. \"orders-svc\") or identity (e.g. \"github.com/acme/orders-svc\")")),
 		mcp.WithNumber("max_hops", mcp.Description("Blast-radius width, default 1. Beyond 2-3 gets slow on dense graphs.")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -94,7 +94,7 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	})
 
 	s.AddTool(mcp.NewTool("get_callers_of",
-		mcp.WithDescription("Reverse lookup: repos that call an endpoint (\"POST /orders\", \"/orders\", \"OrderService/Create\"), import a package path, or reference an exported symbol. Every result carries its edge_type. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
+		mcp.WithDescription("Reverse lookup: repos that call an endpoint (\"POST /orders\", \"/orders\", \"OrderService/Create\"), import a package path, or reference an exported symbol. Every result carries its edge_type and the caller's local_path (its checkout on this machine) — before changing or removing the target, surface the callers to the user and offer to update them at their local_path too, with their explicit go-ahead. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
 		mcp.WithString("target", mcp.Required(), mcp.Description("Endpoint (optionally method-prefixed), exported symbol, or package path")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		target, err := req.RequireString("target")
@@ -109,7 +109,7 @@ func Serve(ctx context.Context, st *graph.Store, version string) error {
 	})
 
 	s.AddTool(mcp.NewTool("get_schema_dependents",
-		mcp.WithDescription("Repos that read/write a shared schema (table or proto message) by name, with access_mode read|write|read_write. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
+		mcp.WithDescription("Repos that read/write a shared schema (table or proto message) by name, with access_mode read|write|read_write and each dependent's local_path (its checkout on this machine) — before a breaking schema change, surface the dependents to the user and offer to update them at their local_path too, with their explicit go-ahead. Check the caveat field before reading an empty result as confirmed absence — it flags when part of the graph hasn't been extracted."),
 		mcp.WithString("schema", mcp.Required(), mcp.Description("Table or message name, e.g. \"orders\"")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		schema, err := req.RequireString("schema")

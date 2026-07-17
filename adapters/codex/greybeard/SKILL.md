@@ -42,9 +42,9 @@ Each query tool returns `{ results: [...], caveat?: "..." }`, not a bare array. 
 
 ## Acting on findings
 
-- If the change affects another repo, say so before proceeding, and ask whether to also update the dependent repo, open a note/ticket, or proceed with just this repo (their choice — don't assume).
-- If the graph shows a caller relationship but you can't access that other repo, flag the specific dependency clearly enough that the user can check it themselves.
-- Never silently make a breaking change to something with known dependents.
+- If the change affects another repo, say so before proceeding — name the dependent repo, the edge type, and the evidence (the symbol/endpoint/table in `detail`, plus `evidence` file:line when present) — and ask whether to also update the dependent repo, open a note/ticket, or proceed with just this repo (their choice — don't assume).
+- Every result includes the dependent repo's `local_path` — its checkout on this machine. If the user wants the coordinated change made, go there and make it: read the referencing code first (search for the `detail` value), apply the matching update, and report both repos' changes together. Only if `local_path` is empty or missing on disk fall back to flagging the dependency for the user to handle.
+- Never edit another repo without the user's explicit go-ahead, and never silently make a breaking change to something with known dependents.
 
 ## Teaching the graph what you see
 

@@ -10,27 +10,30 @@ import (
 
 // RepoRelation is one typed relationship reachable from a repo.
 type RepoRelation struct {
-	Repo     string `json:"repo"`
-	EdgeType string `json:"edge_type"` // imports | calls_api | shares_schema | calls_symbol
-	Detail   string `json:"detail"`
-	Hops     int    `json:"hops"`
-	Source   string `json:"source"`             // scanned (extraction) | agent (verified observation)
-	Evidence string `json:"evidence,omitempty"` // agent edges only: file:line / snippet cited at record_relation time
+	Repo      string `json:"repo"`
+	LocalPath string `json:"local_path,omitempty"` // the related repo's checkout — where a coordinated change would go
+	EdgeType  string `json:"edge_type"`            // imports | calls_api | shares_schema | calls_symbol
+	Detail    string `json:"detail"`
+	Hops      int    `json:"hops"`
+	Source    string `json:"source"`             // scanned (extraction) | agent (verified observation)
+	Evidence  string `json:"evidence,omitempty"` // agent edges only: file:line / snippet cited at record_relation time
 }
 
 // Caller is a repo that calls or imports a target.
 type Caller struct {
-	Repo     string `json:"repo"`
-	EdgeType string `json:"edge_type"`
-	Detail   string `json:"detail"`
-	Source   string `json:"source"`
-	Evidence string `json:"evidence,omitempty"`
+	Repo      string `json:"repo"`
+	LocalPath string `json:"local_path,omitempty"` // the caller's checkout — where a coordinated change would go
+	EdgeType  string `json:"edge_type"`
+	Detail    string `json:"detail"`
+	Source    string `json:"source"`
+	Evidence  string `json:"evidence,omitempty"`
 }
 
 // SchemaDependent is a repo that reads or writes a schema.
 type SchemaDependent struct {
 	Repo        string `json:"repo"`
-	AccessMode  string `json:"access_mode"` // read | write | read_write
+	LocalPath   string `json:"local_path,omitempty"` // the dependent's checkout — where a coordinated change would go
+	AccessMode  string `json:"access_mode"`          // read | write | read_write
 	TableOrType string `json:"table_or_type"`
 	Source      string `json:"source"`
 	Evidence    string `json:"evidence,omitempty"`
@@ -52,12 +55,14 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 	}
 
 	names := map[string]string{} // identity -> short name
+	paths := map[string]string{} // identity -> local checkout path
 	repos, err := s.ListRepos(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range repos {
 		names[r.Identity] = r.Name
+		paths[r.Identity] = r.LocalPath
 	}
 
 	visited := map[string]bool{rec.Identity: true}
@@ -100,7 +105,7 @@ func (s *Store) GetRelatedRepos(ctx context.Context, repo string, maxHops int) (
 			key := other + "|" + edgeType + "|" + detail
 			if !seen[key] {
 				seen[key] = true
-				out = append(out, RepoRelation{Repo: names[other], EdgeType: edgeType, Detail: detail, Hops: hop, Source: source, Evidence: evidence})
+				out = append(out, RepoRelation{Repo: names[other], LocalPath: paths[other], EdgeType: edgeType, Detail: detail, Hops: hop, Source: source, Evidence: evidence})
 			}
 			next = append(next, other)
 		}
@@ -133,7 +138,7 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 		method, path = strings.ToUpper(m), strings.TrimSpace(p)
 	}
 
-	q := `SELECT r.name, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
+	q := `SELECT r.name, r.local_path, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
 		WHERE e.edge_type = 'calls_api' AND e.path = ?`
 	args := []any{path}
 	if method != "" {
@@ -147,14 +152,14 @@ func (s *Store) GetCallersOf(ctx context.Context, target string) ([]Caller, erro
 
 	// imports: exact package match or a subpackage of the target.
 	if err := s.collectCallers(ctx, &out, "imports",
-		`SELECT r.name, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
+		`SELECT r.name, r.local_path, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
 		 WHERE e.edge_type = 'imports' AND (e.detail = ?1 OR e.detail LIKE ?1 || '/%')`, target); err != nil {
 		return nil, err
 	}
 
 	// calls_symbol: exact match on an exported function/type/class name.
 	if err := s.collectCallers(ctx, &out, "calls_symbol",
-		`SELECT r.name, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
+		`SELECT r.name, r.local_path, e.detail, e.source, e.evidence FROM edges e JOIN repos r ON r.identity = e.from_repo
 		 WHERE e.edge_type = 'calls_symbol' AND e.detail = ?`, target); err != nil {
 		return nil, err
 	}
@@ -170,11 +175,11 @@ func (s *Store) collectCallers(ctx context.Context, out *[]Caller, edgeType, que
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name, detail, source, evidence string
-		if err := rows.Scan(&name, &detail, &source, &evidence); err != nil {
+		var name, localPath, detail, source, evidence string
+		if err := rows.Scan(&name, &localPath, &detail, &source, &evidence); err != nil {
 			return err
 		}
-		*out = append(*out, Caller{Repo: name, EdgeType: edgeType, Detail: detail, Source: source, Evidence: evidence})
+		*out = append(*out, Caller{Repo: name, LocalPath: localPath, EdgeType: edgeType, Detail: detail, Source: source, Evidence: evidence})
 	}
 	return rows.Err()
 }
@@ -182,7 +187,7 @@ func (s *Store) collectCallers(ctx context.Context, out *[]Caller, edgeType, que
 // GetSchemaDependents finds repos that read/write a schema by name. A repo
 // that both defines (write) and references (read) it reports read_write.
 func (s *Store) GetSchemaDependents(ctx context.Context, schema string) ([]SchemaDependent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.name, e.access_mode, e.source, e.evidence
+	rows, err := s.db.QueryContext(ctx, `SELECT r.name, r.local_path, e.access_mode, e.source, e.evidence
 		FROM edges e JOIN repos r ON r.identity = e.from_repo
 		WHERE e.edge_type = 'shares_schema' AND e.detail = ?`, schema)
 	if err != nil {
@@ -194,15 +199,17 @@ func (s *Store) GetSchemaDependents(ctx context.Context, schema string) ([]Schem
 	// schema; the agent one is more informative, so it wins when present.
 	source := map[string]string{}
 	evidence := map[string]string{}
+	localPath := map[string]string{}
 	for rows.Next() {
-		var repo, mode, src, ev string
-		if err := rows.Scan(&repo, &mode, &src, &ev); err != nil {
+		var repo, path, mode, src, ev string
+		if err := rows.Scan(&repo, &path, &mode, &src, &ev); err != nil {
 			return nil, err
 		}
 		if modes[repo] == nil {
 			modes[repo] = map[string]bool{}
 		}
 		modes[repo][mode] = true
+		localPath[repo] = path
 		if src == "agent" || source[repo] == "" {
 			source[repo], evidence[repo] = src, ev
 		}
@@ -219,7 +226,7 @@ func (s *Store) GetSchemaDependents(ctx context.Context, schema string) ([]Schem
 		case ms["write"]:
 			mode = "write"
 		}
-		out = append(out, SchemaDependent{Repo: repo, AccessMode: mode, TableOrType: schema,
+		out = append(out, SchemaDependent{Repo: repo, LocalPath: localPath[repo], AccessMode: mode, TableOrType: schema,
 			Source: source[repo], Evidence: evidence[repo]})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Repo < out[j].Repo })
