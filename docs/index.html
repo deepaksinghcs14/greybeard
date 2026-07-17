@@ -31,6 +31,7 @@
     --imports:  #3987e5;
     --calls:    #2ea043;
     --schema:   #d55181;
+    --symbol:   #d9a521;
     --beard:    #3a3935;
     --beard-2:  #6e6b64;
     --art-ink:  #ecece7;
@@ -209,6 +210,126 @@
   ul.plain { color: var(--ink-2); padding-left: 20px; }
   ul.plain li { margin: 8px 0; max-width: 70ch; }
 
+  /* the graph panel — the old man sits faded behind the demo graph */
+  .graph-panel {
+    display: flex; flex-direction: column;
+    height: min(64vh, 560px);
+    margin-top: 22px;
+    border: 1px solid var(--hairline);
+    border-radius: 14px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .graph-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--hairline);
+    font-size: 12.5px;
+  }
+  .graph-bar .live { color: var(--ink-2); }
+  .graph-bar .live b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .graph-bar .hint { color: var(--muted); font-size: 11.5px; }
+  .legend { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
+  .legend button {
+    display: flex; align-items: center; gap: 7px;
+    border: 1px solid transparent; background: none;
+    color: var(--ink-2); font: 12.5px system-ui, sans-serif;
+    padding: 4px 10px; border-radius: 999px; cursor: pointer;
+  }
+  .legend button:hover { border-color: var(--hairline); }
+  .legend button:focus-visible { outline: 2px solid var(--imports); outline-offset: 1px; }
+  .legend button.off { opacity: 0.35; }
+  .legend button.off .swatch { background: var(--muted); }
+  .swatch { width: 18px; height: 3px; border-radius: 2px; }
+
+  .graph-main { position: relative; flex: 1; min-height: 0; }
+  .watermark {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  .watermark svg { width: min(48%, 340px); height: auto; opacity: 0.09; }
+
+  #canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  #canvas.dragging { cursor: grabbing; }
+  .edge { fill: none; opacity: 0.65; transition: opacity 0.15s; }
+  .edge.faded { opacity: 0.06; }
+  .node { cursor: pointer; }
+  .node circle.body {
+    fill: var(--surface2);
+    stroke: var(--ink-2);
+    stroke-width: 1.5;
+    transition: stroke-width 0.1s;
+  }
+  .node:hover circle.body, .node.selected circle.body { stroke-width: 3; stroke: var(--ink); }
+  .node.pinned circle.body { stroke-dasharray: 4 3; }
+  .node.faded { opacity: 0.25; }
+  .node text {
+    font: 600 11.5px system-ui, sans-serif;
+    fill: var(--ink);
+    text-anchor: middle;
+    pointer-events: none;
+    paint-order: stroke;
+    stroke: var(--surface);
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
+
+  .graph-main aside {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(340px, 88%);
+    background: var(--surface2);
+    border-left: 1px solid var(--hairline);
+    padding: 18px 20px;
+    overflow-y: auto;
+    display: none;
+    z-index: 4;
+    text-align: left;
+  }
+  .graph-main aside.open { display: block; }
+  .graph-main aside h2 { margin: 0; font-size: 16px; }
+  .graph-main aside .identity { color: var(--muted); font-size: 11.5px; word-break: break-all; margin: 3px 0 2px; }
+  .graph-main aside .indexed { color: var(--ink-2); font-size: 12px; margin-bottom: 14px; }
+  .graph-main aside .close {
+    position: absolute; top: 12px; right: 12px;
+    border: none; background: none; color: var(--muted);
+    font-size: 17px; cursor: pointer; padding: 4px 8px;
+  }
+  .graph-main aside .close:hover { color: var(--ink); }
+  .graph-main aside h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--muted); margin: 16px 0 6px; font-weight: 600;
+  }
+  .graph-main aside ul { list-style: none; margin: 0; padding: 0; }
+  .graph-main aside li {
+    font-size: 12px; padding: 4px 0;
+    border-bottom: 1px solid var(--hairline);
+    color: var(--ink-2);
+    display: flex; gap: 8px; align-items: baseline;
+  }
+  .graph-main aside li:last-child { border-bottom: none; }
+  .graph-main aside li .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; align-self: center; }
+  .graph-main aside li b { color: var(--ink); font-weight: 600; }
+  .empty-note { color: var(--muted); font-size: 12px; }
+
+  .graph-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface2);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--ink-2);
+    display: none;
+    max-width: 320px;
+    z-index: 5;
+  }
+  .graph-tooltip b { color: var(--ink); }
+  .graph-tooltip .ev { color: var(--muted); font-style: italic; }
+  .agent-badge { color: var(--ink); }
+
   footer { border-top: 1px solid var(--hairline); padding: 36px 0 52px; color: var(--muted); font-size: 13.5px; text-align: center; }
   footer a { color: var(--muted); }
   footer .prompt-line { font-family: ui-monospace, Menlo, monospace; margin-top: 16px; }
@@ -223,6 +344,7 @@
   <div class="wrap">
     <a class="brand" href="#">~/<b>greybeard</b> ❯</a>
     <div class="spacer"></div>
+    <a class="navlink" href="#graph">Graph</a>
     <a class="navlink" href="#install">Install</a>
     <a class="navlink" href="https://github.com/deepaksinghcs14/greybeard">GitHub</a>
     <button id="theme-toggle" aria-label="Request light mode">light mode</button>
@@ -324,6 +446,57 @@
           add a compatibility view, or hold off?"</p>
           <p class="aside">The old man saw it coming. He always does.</p>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="graph">
+    <p class="kicker">the graph</p>
+    <h2>What he sees when you ask</h2>
+    <p>The same view <span class="mono">greybeard visualize</span> serves at localhost — drag a node to pin it,
+    click a repo for its endpoints, schemas, and connections, hover an edge for the evidence behind it.
+    This one runs on <b>demo data</b>; yours is built from your repos and never leaves your machine.</p>
+    <div class="graph-panel">
+      <div class="graph-bar">
+        <span class="live" id="graph-stats"></span>
+        <span class="hint">⌘/ctrl+scroll to zoom · drag background to pan · drop a node to pin it · double-click to unpin</span>
+        <nav class="legend" id="legend" aria-label="Toggle edge types"></nav>
+      </div>
+      <div class="graph-main">
+        <div class="watermark" aria-hidden="true">
+          <svg viewBox="0 0 1000 1220">
+            <path d="M500 118 C 340 112, 205 218, 182 388 C 168 494, 178 585, 210 656 C 236 714, 270 762, 318 796 C 380 840, 452 862, 512 858 C 588 854, 664 826, 722 768 C 782 708, 826 618, 832 508 C 840 372, 800 252, 700 178 C 640 134, 572 116, 500 118 Z"
+                  fill="var(--art-bg)" stroke="var(--art-ink)" stroke-width="21" stroke-linejoin="round"/>
+            <g fill="none" stroke="var(--art-ink)" stroke-width="15">
+              <circle cx="392" cy="474" r="88"/><circle cx="636" cy="466" r="86"/>
+              <path d="M478 462 C 502 448, 528 448, 552 456"/><path d="M304 460 C 268 452, 232 448, 206 452"/>
+              <path d="M722 452 C 758 442, 796 438, 822 444"/>
+            </g>
+            <g stroke="var(--art-ink)" stroke-width="13" stroke-linecap="round" fill="none">
+              <path d="M352 470 C 372 458, 404 458, 428 468"/><path d="M598 462 C 618 450, 650 450, 672 460"/>
+            </g>
+            <g fill="var(--art-ink)"><circle cx="394" cy="484" r="12"/><circle cx="638" cy="476" r="12"/></g>
+            <path d="M506 470 C 500 512, 494 542, 486 560 C 502 572, 526 572, 542 562"
+                  fill="none" stroke="var(--art-ink)" stroke-width="13" stroke-linecap="round"/>
+            <path d="M232 594 C 200 680, 190 790, 216 890 C 240 984, 296 1074, 380 1128 C 428 1158, 492 1176, 544 1170 C 640 1158, 726 1096, 772 1002 C 814 916, 826 800, 802 700 C 792 656, 778 620, 762 594 C 742 640, 706 668, 664 680 C 610 696, 556 692, 512 678 C 468 692, 414 696, 360 682 C 316 670, 262 640, 232 594 Z"
+                  fill="var(--beard)" stroke="var(--art-ink)" stroke-width="20" stroke-linejoin="round"/>
+            <g fill="none" stroke="var(--beard-2)" stroke-width="11" stroke-linecap="round">
+              <path d="M300 726 C 296 812, 310 908, 352 986"/><path d="M382 756 C 376 852, 390 956, 428 1042"/>
+              <path d="M478 768 C 474 866, 480 972, 502 1076"/><path d="M578 764 C 586 860, 580 968, 552 1058"/>
+              <path d="M666 738 C 678 828, 668 928, 626 1010"/><path d="M730 700 C 746 786, 742 878, 712 950"/>
+            </g>
+            <g fill="var(--beard-2)" stroke="var(--art-ink)" stroke-width="11" stroke-linejoin="round">
+              <path d="M512 600 C 466 584, 400 592, 362 622 C 356 642, 368 656, 390 654 C 434 648, 478 644, 510 650 C 544 644, 588 648, 630 656 C 652 658, 664 644, 658 624 C 622 592, 556 584, 512 600 Z"/>
+            </g>
+            <path d="M466 686 C 496 696, 532 696, 560 688" fill="none" stroke="var(--art-ink)" stroke-width="12" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <svg id="canvas" role="img" aria-label="Demo cross-repo dependency graph"></svg>
+        <aside id="panel" aria-live="polite">
+          <button class="close" id="panel-close" aria-label="Close details">✕</button>
+          <div id="panel-body"></div>
+        </aside>
+        <div class="graph-tooltip" id="tooltip"></div>
       </div>
     </div>
   </section>
@@ -433,6 +606,407 @@
   </footer>
 </div>
 
+<script>
+"use strict";
+// Demo data — fictional org, fictional repos. Matches the story the rest of
+// the page tells (billing-svc reading the orders schema, etc.).
+const REPO = (name, extra) => Object.assign({
+  identity: "github.com/acme-corp/" + name, name,
+  last_indexed_at: "2026-07-17T09:41:00Z",
+  endpoints: [], schemas: [], symbols: [], packages: [],
+}, extra);
+const DATA = {
+  repos: [
+    REPO("commons-go",        { packages: ["github.com/acme-corp/commons-go"] }),
+    REPO("api-common",        { packages: ["github.com/acme-corp/api-common"] }),
+    REPO("orders-svc",        { endpoints: ["GET /v1/orders", "POST /v1/orders", "GET /v1/orders/{id}", "DELETE /v1/orders/{id}"], schemas: ["orders", "order_items"] }),
+    REPO("billing-svc",       { schemas: ["invoices", "reconciliations"] }),
+    REPO("payments-gw",       { endpoints: ["POST /v1/charges", "GET /v1/charges/{id}"] }),
+    REPO("ledger-svc",        { schemas: ["transactions", "balances"], symbols: ["BalanceSnapshot", "PostEntry"] }),
+    REPO("auth-svc",          { endpoints: ["POST /v1/token", "GET /v1/keys"] }),
+    REPO("notifications",     { endpoints: ["POST /v1/notify"] }),
+    REPO("connector-platform",{ endpoints: ["GET /v1/connectors", "POST /v1/connectors"], symbols: ["NewConnectorClient", "Connector"] }),
+    REPO("workflow-svc",      { endpoints: ["GET /v1/workflows", "POST /v1/workflows"] }),
+    REPO("reporting",         {}),
+    REPO("search-svc",        { endpoints: ["GET /v1/search"] }),
+    REPO("infra",             { last_indexed_at: "" }),
+    REPO("docs-site",         { last_indexed_at: "" }),
+  ],
+  edges: (() => {
+    const E = (from, edge_type, to, detail, source, evidence) => ({
+      from: "github.com/acme-corp/" + from, to: "github.com/acme-corp/" + to,
+      edge_type, detail, source: source || "scanned", evidence: evidence || "",
+    });
+    return [
+      E("billing-svc", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("billing-svc", "shares_schema", "orders-svc", "orders", "agent", "internal/recon/nightly.go:112"),
+      E("billing-svc", "shares_schema", "ledger-svc", "transactions"),
+      E("orders-svc", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("orders-svc", "imports", "api-common", "github.com/acme-corp/api-common"),
+      E("orders-svc", "calls_api", "auth-svc", "POST /v1/token"),
+      E("payments-gw", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("payments-gw", "calls_api", "orders-svc", "GET /v1/orders/{id}"),
+      E("payments-gw", "calls_api", "auth-svc", "POST /v1/token"),
+      E("payments-gw", "shares_schema", "ledger-svc", "transactions"),
+      E("ledger-svc", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("auth-svc", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("notifications", "imports", "api-common", "github.com/acme-corp/api-common"),
+      E("notifications", "calls_api", "orders-svc", "GET /v1/orders/{id}"),
+      E("notifications", "calls_api", "auth-svc", "POST /v1/token"),
+      E("connector-platform", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("connector-platform", "imports", "api-common", "github.com/acme-corp/api-common"),
+      E("workflow-svc", "imports", "commons-go", "github.com/acme-corp/commons-go"),
+      E("workflow-svc", "calls_api", "connector-platform", "GET /v1/connectors"),
+      E("workflow-svc", "calls_api", "connector-platform", "POST /v1/connectors"),
+      E("workflow-svc", "calls_symbol", "connector-platform", "NewConnectorClient", "agent", "internal/exec/runner.go:87"),
+      E("reporting", "calls_symbol", "ledger-svc", "BalanceSnapshot"),
+      E("reporting", "shares_schema", "orders-svc", "orders"),
+      E("reporting", "shares_schema", "ledger-svc", "transactions"),
+      E("reporting", "shares_schema", "billing-svc", "invoices", "agent", "queries/monthly_close.sql:9"),
+      E("search-svc", "imports", "api-common", "github.com/acme-corp/api-common"),
+      E("search-svc", "calls_api", "orders-svc", "GET /v1/orders"),
+    ];
+  })(),
+};
+
+const EDGE_TYPES = [
+  { key: "imports",       label: "imports",       varName: "--imports", hint: "compile-time dependency" },
+  { key: "calls_api",     label: "calls_api",     varName: "--calls",   hint: "runtime HTTP/gRPC call" },
+  { key: "shares_schema", label: "shares_schema", varName: "--schema",  hint: "shared data contract" },
+  { key: "calls_symbol",  label: "calls_symbol",  varName: "--symbol",  hint: "scanned reference to an exported symbol" },
+];
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const svg = document.getElementById("canvas");
+const NS = "http://www.w3.org/2000/svg";
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// --- model -------------------------------------------------------------------
+const nodes = DATA.repos.map((r) => ({ ...r, x: 0, y: 0, vx: 0, vy: 0, pinned: false }));
+const byId = new Map(nodes.map((n) => [n.identity, n]));
+
+// Bundle parallel edges: one rendered line per (from, to, edge_type) carrying
+// all its underlying links.
+const rawEdges = DATA.edges.filter((e) => byId.has(e.from) && byId.has(e.to) && e.from !== e.to);
+const bundles = new Map();
+for (const e of rawEdges) {
+  const key = e.from + "|" + e.to + "|" + e.edge_type;
+  if (!bundles.has(key)) {
+    bundles.set(key, { from: e.from, to: e.to, edge_type: e.edge_type,
+      a: byId.get(e.from), b: byId.get(e.to), details: [] });
+  }
+  bundles.get(key).details.push({ text: e.detail, source: e.source, evidence: e.evidence });
+}
+const edges = [...bundles.values()];
+const pairCount = {};
+for (const e of edges) {
+  const k = [e.from, e.to].sort().join("|");
+  e.pair = k;
+  e.lane = (pairCount[k] = (pairCount[k] || 0) + 1) - 1;
+}
+for (const n of nodes) {
+  n.degree = edges.reduce((d, e) => d + (e.a === n || e.b === n), 0);
+  n.links = rawEdges.reduce((d, e) => d + (e.from === n.identity || e.to === n.identity), 0);
+  n.r = 9 + 3 * Math.sqrt(Math.min(n.degree, 36));
+}
+
+// --- graph bar ------------------------------------------------------------------
+document.getElementById("graph-stats").innerHTML =
+  `<b>${nodes.length}</b> repos · <b>${rawEdges.length}</b> links · demo data`;
+const present = new Set(edges.map((e) => e.edge_type));
+const hidden = new Set();
+const legend = document.getElementById("legend");
+for (const t of EDGE_TYPES) {
+  if (!present.has(t.key)) continue; // only edge types the demo graph actually has
+  const btn = document.createElement("button");
+  btn.title = t.hint;
+  btn.innerHTML = `<span class="swatch" style="background:var(${t.varName})"></span>${t.label}`;
+  btn.onclick = () => {
+    hidden.has(t.key) ? hidden.delete(t.key) : hidden.add(t.key);
+    btn.classList.toggle("off", hidden.has(t.key));
+    render();
+  };
+  legend.appendChild(btn);
+}
+
+// --- view (zoom / pan) ---------------------------------------------------------
+let W = 800, H = 600;
+const view = { x: 0, y: 0, k: 1 };
+function measure() {
+  W = svg.clientWidth; H = svg.clientHeight;
+  applyView();
+}
+function applyView() {
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${W / view.k} ${H / view.k}`);
+}
+function toGraph(ev) {
+  const r = svg.getBoundingClientRect();
+  return [view.x + (ev.clientX - r.left) / view.k, view.y + (ev.clientY - r.top) / view.k];
+}
+// Embedded in a scrolling page: plain scroll passes through, ⌘/ctrl+scroll
+// (and trackpad pinch, which arrives as ctrlKey wheel) zooms.
+svg.addEventListener("wheel", (ev) => {
+  if (!ev.ctrlKey && !ev.metaKey) return;
+  ev.preventDefault();
+  const [gx, gy] = toGraph(ev);
+  const k = Math.min(6, Math.max(0.3, view.k * (ev.deltaY < 0 ? 1.12 : 0.89)));
+  view.x = gx - (gx - view.x) * (view.k / k);
+  view.y = gy - (gy - view.y) * (view.k / k);
+  view.k = k;
+  applyView();
+}, { passive: false });
+
+measure();
+addEventListener("resize", () => {
+  measure();
+  alpha = Math.max(alpha, 0.3);
+  reducedMotion ? (tickSettle(), render()) : kick();
+});
+
+for (const [i, n] of nodes.entries()) {
+  const angle = (i / Math.max(nodes.length, 1)) * 2 * Math.PI;
+  n.x = W / 2 + Math.cos(angle) * Math.min(W, H) * 0.32;
+  n.y = H / 2 + Math.sin(angle) * Math.min(W, H) * 0.32;
+}
+
+// --- force layout ---------------------------------------------------------------
+let dragNode = null, downPos = null, dragMoved = false, panStart = null;
+const REPULSE = 9000 + 700 * nodes.length;
+let alpha = 1;
+function tick() {
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy || 1;
+      const f = Math.min(REPULSE / d2, 10) * alpha;
+      const d = Math.sqrt(d2);
+      dx /= d; dy /= d;
+      a.vx -= dx * f; a.vy -= dy * f;
+      b.vx += dx * f; b.vy += dy * f;
+    }
+  }
+  for (const e of edges) {
+    let dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.sqrt(dx * dx + dy * dy) || 1;
+    const want = 170 + e.a.r + e.b.r;
+    const f = ((d - want) / d) * 0.03 * alpha;
+    dx *= f; dy *= f;
+    e.a.vx += dx; e.a.vy += dy;
+    e.b.vx -= dx; e.b.vy -= dy;
+  }
+  for (const n of nodes) {
+    n.vx += (W / 2 - n.x) * 0.004 * alpha;
+    n.vy += (H / 2 - n.y) * 0.004 * alpha;
+    if (n !== dragNode && !n.pinned) {
+      n.x += n.vx; n.y += n.vy;
+    }
+    n.vx *= 0.6; n.vy *= 0.6;
+  }
+  alpha *= 0.985;
+}
+
+let raf = null;
+function kick() {
+  if (raf || !nodes.length) return;
+  const loop = () => {
+    tick(); render();
+    raf = alpha > 0.005 ? requestAnimationFrame(loop) : null;
+  };
+  raf = requestAnimationFrame(loop);
+}
+if (reducedMotion) {
+  for (let i = 0; i < 300; i++) tick();
+  alpha = 0;
+}
+
+// --- render ---------------------------------------------------------------------
+let selected = null;
+function edgePath(e) {
+  const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+  const d = Math.sqrt(dx * dx + dy * dy) || 1;
+  const sign = e.from < e.to ? 1 : -1;
+  const bend = sign * (e.lane - (pairCount[e.pair] - 1) / 2) * 20;
+  const mx = (e.a.x + e.b.x) / 2 - (dy / d) * bend;
+  const my = (e.a.y + e.b.y) / 2 + (dx / d) * bend;
+  const toward = (p, r) => {
+    const tx = mx - p.x, ty = my - p.y, td = Math.hypot(tx, ty) || 1;
+    return `${p.x + (tx / td) * r} ${p.y + (ty / td) * r}`;
+  };
+  return `M ${toward(e.a, e.a.r + 2)} Q ${mx} ${my} ${toward(e.b, e.b.r + 5)}`;
+}
+const typeVar = Object.fromEntries(EDGE_TYPES.map((t) => [t.key, t.varName]));
+
+function edgeTip(e) {
+  const shown = e.details.slice(0, 4).map((d) => {
+    const line = esc(d.text) + (d.source === "agent" ? ` <span class="agent-badge" title="agent-verified">✓</span>` : "");
+    return d.evidence ? `${line}<br><span class="ev">${esc(d.evidence)}</span>` : line;
+  }).join("<br>");
+  const more = e.details.length > 4 ? `<br>…and ${e.details.length - 4} more` : "";
+  return `<b>${esc(e.a.name)}</b> ${esc(e.edge_type)} → <b>${esc(e.b.name)}</b>` +
+    ` · ${e.details.length} link${e.details.length === 1 ? "" : "s"}<br>${shown}${more}`;
+}
+
+function render() {
+  svg.innerHTML = "";
+  const defs = document.createElementNS(NS, "defs");
+  for (const t of EDGE_TYPES) {
+    const m = document.createElementNS(NS, "marker");
+    m.setAttribute("id", "arrow-" + t.key);
+    m.setAttribute("viewBox", "0 0 10 10");
+    m.setAttribute("refX", "9"); m.setAttribute("refY", "5");
+    m.setAttribute("markerWidth", "5"); m.setAttribute("markerHeight", "5");
+    m.setAttribute("orient", "auto-start-reverse");
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    p.setAttribute("fill", css(t.varName));
+    m.appendChild(p);
+    defs.appendChild(m);
+  }
+  svg.appendChild(defs);
+
+  for (const e of edges) {
+    if (hidden.has(e.edge_type)) continue;
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("class", "edge" + (selected && e.a !== selected && e.b !== selected ? " faded" : ""));
+    path.setAttribute("d", edgePath(e));
+    path.setAttribute("stroke", css(typeVar[e.edge_type] || "--muted"));
+    path.setAttribute("stroke-width", 1.5 + Math.min(4.5, Math.log2(e.details.length + 1)));
+    path.setAttribute("marker-end", `url(#arrow-${e.edge_type})`);
+    path.addEventListener("pointermove", (ev) => showTip(ev, edgeTip(e)));
+    path.addEventListener("pointerleave", hideTip);
+    svg.appendChild(path);
+  }
+
+  for (const n of nodes) {
+    const g = document.createElementNS(NS, "g");
+    g.setAttribute("class", "node" + (n === selected ? " selected" : "") + (n.pinned ? " pinned" : "") +
+      (selected && n !== selected && !adjacent(n, selected) ? " faded" : ""));
+    g.setAttribute("transform", `translate(${n.x},${n.y})`);
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("class", "body");
+    c.setAttribute("r", n.r);
+    g.appendChild(c);
+    const t = document.createElementNS(NS, "text");
+    t.setAttribute("y", n.r + 14);
+    t.textContent = n.name;
+    g.appendChild(t);
+    g.__node = n;
+    g.addEventListener("pointermove", (ev) => {
+      if (!dragNode) showTip(ev, `<b>${esc(n.name)}</b><br>${n.links} link${n.links === 1 ? "" : "s"} across ${n.degree} connection${n.degree === 1 ? "" : "s"}` +
+        `${n.pinned ? " · pinned (double-click to release)" : ""}`);
+    });
+    g.addEventListener("pointerleave", hideTip);
+    g.addEventListener("dblclick", (ev) => {
+      ev.preventDefault();
+      n.pinned = false;
+      alpha = Math.max(alpha, reducedMotion ? 0 : 0.2);
+      reducedMotion ? (tickSettle(), render()) : kick();
+    });
+    svg.appendChild(g);
+  }
+}
+function tickSettle() { for (let i = 0; i < 120; i++) tick(); alpha = 0; }
+function adjacent(a, b) {
+  return edges.some((e) => !hidden.has(e.edge_type) &&
+    ((e.a === a && e.b === b) || (e.a === b && e.b === a)));
+}
+
+// --- drag / click / pan ---------------------------------------------------------
+svg.addEventListener("pointerleave", hideTip);
+svg.addEventListener("pointerdown", (ev) => {
+  const g = ev.target.closest && ev.target.closest("g.node");
+  dragNode = g ? g.__node : null;
+  downPos = [ev.clientX, ev.clientY];
+  dragMoved = false;
+  panStart = dragNode ? null : { x: view.x, y: view.y, cx: ev.clientX, cy: ev.clientY };
+  svg.setPointerCapture(ev.pointerId);
+  if (dragNode) hideTip();
+});
+svg.addEventListener("pointermove", (ev) => {
+  if (!downPos) return;
+  if (!dragMoved && Math.hypot(ev.clientX - downPos[0], ev.clientY - downPos[1]) < 4) return;
+  dragMoved = true;
+  svg.classList.add("dragging");
+  if (dragNode) {
+    const [gx, gy] = toGraph(ev);
+    dragNode.x = gx;
+    dragNode.y = gy;
+    alpha = Math.max(alpha, reducedMotion ? 0 : 0.15);
+    reducedMotion ? render() : kick();
+  } else if (panStart) {
+    view.x = panStart.x - (ev.clientX - panStart.cx) / view.k;
+    view.y = panStart.y - (ev.clientY - panStart.cy) / view.k;
+    applyView();
+  }
+});
+svg.addEventListener("pointerup", () => {
+  if (!dragMoved) {
+    select(dragNode);
+  } else if (dragNode) {
+    dragNode.pinned = true;
+    render();
+  }
+  dragNode = null;
+  downPos = null;
+  panStart = null;
+  svg.classList.remove("dragging");
+});
+
+// --- detail panel -----------------------------------------------------------------
+const panel = document.getElementById("panel");
+const panelBody = document.getElementById("panel-body");
+document.getElementById("panel-close").onclick = () => select(null);
+function select(n) {
+  selected = n;
+  panel.classList.toggle("open", !!n);
+  if (n) {
+    const owned = (title, items) => `<h3>${title}</h3>` + (items && items.length
+      ? `<ul>${items.map((i) => `<li class="mono">${esc(i)}</li>`).join("")}</ul>`
+      : `<div class="empty-note">none extracted</div>`);
+    const conns = edges
+      .filter((e) => e.a === n || e.b === n)
+      .map((e) => {
+        const out = e.a === n;
+        const other = out ? e.b.name : e.a.name;
+        const shown = e.details.slice(0, 6).map((d) => esc(d.text)).join(", ");
+        const more = e.details.length > 6 ? `, +${e.details.length - 6} more` : "";
+        return `<li><span class="dot" style="background:var(${typeVar[e.edge_type]})"></span>
+          <span>${out ? "→" : "←"} <b>${esc(other)}</b> · ${esc(e.edge_type)} (${e.details.length})
+          <span class="mono">${shown}${more}</span></span></li>`;
+      }).join("");
+    panelBody.innerHTML = `
+      <h2>${esc(n.name)}</h2>
+      <div class="identity mono">${esc(n.identity)}</div>
+      <div class="indexed">${n.last_indexed_at ? "indexed " + esc(n.last_indexed_at) : "never indexed"}</div>
+      <h3>Connections</h3>
+      ${conns ? `<ul>${conns}</ul>` : `<div class="empty-note">no cross-repo edges — locally contained</div>`}
+      ${owned("Endpoints", n.endpoints)}
+      ${owned("Schemas", n.schemas)}
+      ${owned("Symbols", n.symbols)}
+      ${owned("Packages consumed by others", n.packages)}`;
+  }
+  render();
+}
+
+// --- tooltip ------------------------------------------------------------------------
+const tip = document.getElementById("tooltip");
+const graphMain = document.querySelector(".graph-main");
+function showTip(ev, html) {
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const main = graphMain.getBoundingClientRect();
+  tip.style.left = Math.max(0, Math.min(ev.clientX - main.left + 14, main.width - 340)) + "px";
+  tip.style.top = (ev.clientY - main.top + 14) + "px";
+}
+function hideTip() { tip.style.display = "none"; }
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+render();
+kick();
+</script>
 <script>
   // The light mode button. It does not enable light mode.
   // It takes you to the old man, and the old man answers.
