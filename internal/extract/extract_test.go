@@ -1,11 +1,43 @@
 package extract
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
+
+// BenchmarkScanRefs models the phase-2 hot path at org scale: one repo's
+// source tree scanned against the pooled needles of every other repo
+// (hundreds of symbols once symbol extraction is populated).
+func BenchmarkScanRefs(b *testing.B) {
+	dir := b.TempDir()
+	syms := make([]string, 5000)
+	for i := range syms {
+		syms[i] = fmt.Sprintf("ExportedSymbol%03d", i)
+	}
+	tables := make([]string, 60)
+	for i := range tables {
+		tables[i] = fmt.Sprintf("shared_table_%02d", i)
+	}
+	filler := strings.Repeat("func process(x int) int { return x * 2 } // pipeline step\n", 800)
+	content := filler +
+		"db.Query(\"SELECT * FROM shared_table_07 JOIN app.shared_table_08\")\n" +
+		"res := ExportedSymbol042(1)\n" +
+		"resp := client.Get(\"/v1/orders\")\n"
+	for i := 0; i < 40; i++ {
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%02d.go", i)), []byte(content), 0o644)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		pathHits, tableHits, _, symHits := ScanRefs(dir, []string{"/v1/orders"}, tables, nil, syms)
+		if len(pathHits) != 1 || len(tableHits) != 2 || len(symHits) != 1 {
+			b.Fatalf("unexpected hits: %d paths, %d tables, %d symbols", len(pathHits), len(tableHits), len(symHits))
+		}
+	}
+}
 
 const ordersFixture = "../../testdata/repos/orders-svc"
 const billingFixture = "../../testdata/repos/billing-svc"

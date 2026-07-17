@@ -96,7 +96,7 @@ var symbolRes = map[string][]*regexp.Regexp{
 		// name, never the receiver type
 		regexp.MustCompile(`(?m)^(?:public\s+)?(?:(?:suspend|inline|infix|operator|tailrec|external)\s+)*fun\s+(?:<[^>\n]*>\s+)?(?:[\w.<>?]+\.)?(\w+)\s*\(`),
 	},
-	".cs":   {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	".cs": {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
 	".php": {
 		regexp.MustCompile(`(?m)^\s*function\s+(\w+)\s*\(`),
 		regexp.MustCompile(`(?m)^\s*class\s+(\w+)`),
@@ -672,26 +672,120 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 	tableHits = map[string]string{}
 	messageHits = map[string]bool{}
 	symbolHits = map[string]bool{}
-	nameRe := func(kw, t string) *regexp.Regexp {
-		return regexp.MustCompile(`(?i)\b(` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
+
+	// One combined alternation regex per category, not one regex per needle:
+	// RE2 matches an N-way literal alternation in the same linear pass as a
+	// single literal, so a file is scanned once per category instead of once
+	// per table/message/symbol. At org scale (hundreds of pooled symbols)
+	// per-needle scanning made builds minutes slower — see BenchmarkScanRefs.
+	// The trailing \b keeps overlap semantics identical to per-needle
+	// matching: on "OrderService", the "Order" alternative fails the boundary
+	// and the engine falls through to "OrderService".
+	group := func(names []string) string {
+		quoted := make([]string, len(names))
+		for i, n := range names {
+			quoted[i] = regexp.QuoteMeta(n)
+		}
+		return "(" + strings.Join(quoted, "|") + ")"
 	}
-	readRes := make(map[string]*regexp.Regexp, len(tables))
-	writeRes := make(map[string]*regexp.Regexp, len(tables))
+	var msgRe, symRe *regexp.Regexp
+	// Messages and symbols are word-boundary matches of plain identifiers.
+	// For a \w-only needle, \bname\b is exactly "some maximal \w-run in the
+	// file equals name" — so instead of a regex whose cost grows with the
+	// pool (the org-wide symbol pool runs to thousands), tokenize each file
+	// once and hash-check every word-run. Needles with non-word chars (rare)
+	// keep the alternation-regex path.
+	// Symbols are word-boundary-only deliberately: no call-site requirement
+	// (unlike paths, which need a quote) — genericity + org corroboration in
+	// computeRefs carries the precision burden instead, same as table names.
+	wordOnly := func(names []string) (words map[string]bool, rest []string) {
+		words = make(map[string]bool, len(names))
+		for _, n := range names {
+			plain := n != ""
+			for i := 0; i < len(n); i++ {
+				c := n[i]
+				if !(c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z') {
+					plain = false
+					break
+				}
+			}
+			if plain {
+				words[n] = true
+			} else {
+				rest = append(rest, n)
+			}
+		}
+		return words, rest
+	}
+	msgWords, msgRest := wordOnly(messages)
+	symWords, symRest := wordOnly(symbols)
+	// Tables need SQL-keyword context, which the token pass can't judge —
+	// but a table name that could match \b-delimited always appears as a
+	// full token, so the token pass is an exact prefilter: the per-table
+	// context regexes (compiled once, lazily) run only on the rare file
+	// that mentions a candidate name at all. Table names are [A-Za-z_]\w*
+	// by construction (createTableRe), so none land in the regex fallback.
+	// keyed lowercase: table matching is case-insensitive (ORDERS is orders)
+	tblWords := map[string]string{} // lowercase -> needle as given
+	maxTbl := 0
 	for _, t := range tables {
-		readRes[t] = nameRe(`from|join`, t)
-		writeRes[t] = nameRe(`insert\s+into|update|delete\s+from|merge\s+into|create\s+table(\s+if\s+not\s+exists)?`, t)
+		tblWords[strings.ToLower(t)] = t
+		if len(t) > maxTbl {
+			maxTbl = len(t)
+		}
 	}
-	messageRes := make(map[string]*regexp.Regexp, len(messages))
-	for _, m := range messages {
-		messageRes[m] = regexp.MustCompile(`\b` + regexp.QuoteMeta(m) + `\b`)
+	// tables merge read/write across files; read+write = read_write
+	addMode := func(t, mode string) {
+		switch cur := tableHits[t]; {
+		case cur == "":
+			tableHits[t] = mode
+		case cur != mode && cur != "read_write":
+			tableHits[t] = "read_write"
+		}
 	}
-	// word-boundary only, no call-site requirement (unlike paths, which need
-	// a quote) — genericity + org corroboration in computeRefs carries the
-	// precision burden instead, same as table names.
-	symRes := make(map[string]*regexp.Regexp, len(symbols))
-	for _, sym := range symbols {
-		symRes[sym] = regexp.MustCompile(`\b` + regexp.QuoteMeta(sym) + `\b`)
+	nameRe := func(kw, t string) *regexp.Regexp {
+		return regexp.MustCompile(`(?i)\b(?:` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
 	}
+	readRes := map[string]*regexp.Regexp{}
+	writeRes := map[string]*regexp.Regexp{}
+	tableCtx := func(t, s string) {
+		if readRes[t] == nil {
+			readRes[t] = nameRe(`from|join`, t)
+			writeRes[t] = nameRe(`insert\s+into|update|delete\s+from|merge\s+into|create\s+table(?:\s+if\s+not\s+exists)?`, t)
+		}
+		if readRes[t].MatchString(s) {
+			addMode(t, "read")
+		}
+		if writeRes[t].MatchString(s) {
+			addMode(t, "write")
+		}
+	}
+	if len(msgRest) > 0 {
+		msgRe = regexp.MustCompile(`\b` + group(msgRest) + `\b`)
+	}
+	if len(symRest) > 0 {
+		symRe = regexp.MustCompile(`\b` + group(symRest) + `\b`)
+	}
+	isWord := func(c byte) bool {
+		return c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+	}
+	// scanTokens visits every maximal \w-run in s — one linear pass.
+	scanTokens := func(s string, visit func(tok string, start, end int)) {
+		for i := 0; i < len(s); {
+			if !isWord(s[i]) {
+				i++
+				continue
+			}
+			j := i + 1
+			for j < len(s) && isWord(s[j]) {
+				j++
+			}
+			visit(s[i:j], i, j)
+			i = j
+		}
+	}
+	var lowBuf []byte // reused across tokens; map lookup via string(lowBuf) doesn't allocate
+
 	walkSources(root, maxScanFileSize, func(path string) {
 		base := filepath.Base(path)
 		// test code references tables/endpoints/symbols via fixtures and
@@ -707,39 +801,68 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 		}
 		s := string(b)
 		isProto := strings.HasSuffix(strings.ToLower(path), ".proto")
-		for _, line := range strings.Split(s, "\n") {
-			if strings.ContainsAny(line, "\"'`") {
-				for _, p := range paths {
-					if !pathHits[p] && strings.Contains(line, p) {
-						pathHits[p] = true
+		if len(paths) > 0 {
+			// paths stay substring-per-line: they overlap ("/v1/orders" inside
+			// "/v1/orders/{id}") where an alternation would report only one,
+			// and the org's endpoint list is small enough not to matter.
+			for _, line := range strings.Split(s, "\n") {
+				if strings.ContainsAny(line, "\"'`") {
+					for _, p := range paths {
+						if !pathHits[p] && strings.Contains(line, p) {
+							pathHits[p] = true
+						}
 					}
 				}
 			}
 		}
-		for _, t := range tables {
-			if mode := tableHits[t]; mode != "read_write" {
-				read := strings.Contains(mode, "read") || readRes[t].MatchString(s)
-				write := strings.Contains(mode, "write") || writeRes[t].MatchString(s)
-				switch {
-				case read && write:
-					tableHits[t] = "read_write"
-				case write:
-					tableHits[t] = "write"
-				case read:
-					tableHits[t] = "read"
+		if len(symWords) > 0 || len(tblWords) > 0 || (isProto && len(msgWords) > 0) {
+			scanTokens(s, func(tok string, i, j int) {
+				if symWords[tok] {
+					symbolHits[tok] = true
 				}
+				if isProto && msgWords[tok] {
+					messageHits[tok] = true
+				}
+				if len(tblWords) == 0 || len(tok) > maxTbl {
+					return
+				}
+				lowBuf = lowBuf[:0]
+				for k := 0; k < len(tok); k++ {
+					c := tok[k]
+					if 'A' <= c && c <= 'Z' {
+						c += 32
+					}
+					lowBuf = append(lowBuf, c)
+				}
+				t, ok := tblWords[string(lowBuf)]
+				if !ok || tableHits[t] == "read_write" {
+					return
+				}
+				// The SQL keyword context sits within a short window before
+				// the name — run the context regexes on that window, not the
+				// whole file. Trim a word truncated by the cut so the window
+				// edge can't fabricate a \b for the keyword.
+				// ponytail: 160 bytes covers real formatting; a keyword
+				// separated from its table by more whitespace than that is
+				// out of scope.
+				start := i - 160
+				if start < 0 {
+					start = 0
+				}
+				for start < i && isWord(s[start]) {
+					start++
+				}
+				tableCtx(t, s[start:j])
+			})
+		}
+		if isProto && msgRe != nil {
+			for _, m := range msgRe.FindAllString(s, -1) {
+				messageHits[m] = true
 			}
 		}
-		if isProto {
-			for m, re := range messageRes {
-				if !messageHits[m] && re.MatchString(s) {
-					messageHits[m] = true
-				}
-			}
-		}
-		for sym, re := range symRes {
-			if !symbolHits[sym] && re.MatchString(s) {
-				symbolHits[sym] = true
+		if symRe != nil {
+			for _, m := range symRe.FindAllString(s, -1) {
+				symbolHits[m] = true
 			}
 		}
 	})
