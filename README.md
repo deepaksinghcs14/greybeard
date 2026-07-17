@@ -41,6 +41,16 @@ With greybeard:
 > schema directly. A rename will break its reconciliation silently. Proceed
 > and flag billing-svc, add a compatibility view, or hold off?
 
+You say *"update billing-svc too"*:
+
+> Done in both repos — renamed the column here, and updated the two
+> reconciliation queries in billing-svc's checkout (`~/code/billing-svc`).
+> Review both diffs before committing.
+
+The graph doesn't just warn: every dependent it reports comes with its
+`local_path`, so a coordinated fix is one yes away — and never happens
+without that yes.
+
 ## How it works
 
 ```
@@ -59,6 +69,10 @@ declares itself resolve locally, `/health` never links anything, and a
 `users` table (or a generic symbol like `Config`) only links repos that
 already share a harder edge. Same name is not same thing. Node/edge model:
 [graph-schema.md](skills/greybeard/references/graph-schema.md).
+
+Every query result also carries the dependent repo's `local_path` — its
+checkout on your machine — so the agent can offer to make the matching
+change there too, with your explicit go-ahead.
 
 A session-start hook keeps the current repo's data fresh (and the binary
 updated) automatically. Extraction gaps are "unknown," never "no dependency."
