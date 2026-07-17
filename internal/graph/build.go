@@ -67,6 +67,15 @@ func (s *Store) BuildAll(ctx context.Context, progress func(string)) (BuildResul
 	if progress == nil {
 		progress = func(string) {}
 	}
+	// Phases 1 and 2 call progress from concurrent goroutines; serialize here
+	// so callers can pass a plain closure (the MCP handler appends to a slice).
+	var pmu sync.Mutex
+	userProgress := progress
+	progress = func(line string) {
+		pmu.Lock()
+		defer pmu.Unlock()
+		userProgress(line)
+	}
 	var res BuildResult
 	repos, err := s.ListRepos(ctx)
 	if err != nil {

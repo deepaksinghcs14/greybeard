@@ -51,8 +51,8 @@
   a { color: inherit; }
   .wrap { max-width: 920px; margin: 0 auto; padding: 0 24px; }
 
-  /* nav */
-  nav {
+  /* nav — body > nav so the rule can't hit the graph legend's <nav> */
+  body > nav {
     position: sticky; top: 0; z-index: 10;
     background: color-mix(in srgb, var(--page) 88%, transparent);
     backdrop-filter: blur(8px);
@@ -228,7 +228,7 @@
   }
   .graph-bar .live { color: var(--ink-2); }
   .graph-bar .live b { color: var(--ink); font-variant-numeric: tabular-nums; }
-  .graph-bar .hint { color: var(--muted); font-size: 11.5px; }
+  .graph-bar .hint { color: var(--ink-2); font-size: 11.5px; }
   .legend { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
   .legend button {
     display: flex; align-items: center; gap: 7px;
@@ -250,7 +250,8 @@
   }
   .watermark svg { width: min(48%, 340px); height: auto; opacity: 0.09; }
 
-  #canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  /* pan-y: vertical swipes keep scrolling the page; horizontal drags pan the graph */
+  #canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: pan-y; }
   #canvas.dragging { cursor: grabbing; }
   .edge { fill: none; opacity: 0.65; transition: opacity 0.15s; }
   .edge.faded { opacity: 0.06; }
@@ -516,8 +517,8 @@
     <p class="kicker">how it works</p>
     <h2>Extract, store, serve, learn</h2>
     <div class="steps">
-      <div class="step"><div class="n">01 EXTRACT</div><h3>Read what repos declare</h3><p>Manifests, OpenAPI specs, protos, SQL migrations — parsed once per repo, kept fresh by a session hook.</p></div>
-      <div class="step"><div class="n">02 STORE</div><h3>A typed graph</h3><p>Repos, endpoints, schemas, packages — edges typed by the evidence behind them.</p></div>
+      <div class="step"><div class="n">01 EXTRACT</div><h3>Read what repos declare</h3><p>Manifests, OpenAPI specs, protos, SQL migrations, exported symbols — parsed once per repo, kept fresh by a session hook.</p></div>
+      <div class="step"><div class="n">02 STORE</div><h3>A typed graph</h3><p>Repos, endpoints, schemas, symbols, packages — edges typed by the evidence behind them.</p></div>
       <div class="step"><div class="n">03 SERVE</div><h3>MCP over stdio</h3><p>Any agent asks before changing anything. Every answer flags it if the graph has gaps, so empty never gets mistaken for confirmed.</p></div>
       <div class="step"><div class="n">04 LEARN</div><h3>Agents teach it back</h3><p>Relationships your agent verifies in code get recorded with file:line evidence. The graph compounds.</p></div>
     </div>
@@ -557,12 +558,13 @@
 
   <section>
     <p class="kicker">commands</p>
-    <h2>Four in chat, the rest in the terminal</h2>
+    <h2>Five in chat, the rest in the terminal</h2>
     <div class="cmds">
       <div class="cmd-card"><code class="mono">/greybeard-init</code><div>register every repo under a root — once</div></div>
       <div class="cmd-card"><code class="mono">/greybeard-build</code><div>full extraction, per-repo progress in chat</div></div>
       <div class="cmd-card"><code class="mono">/greybeard-query</code><div>ask the graph anything, plain language</div></div>
       <div class="cmd-card"><code class="mono">/greybeard-audit</code><div>what's empty, what's stale — changes nothing</div></div>
+      <div class="cmd-card"><code class="mono">/greybeard-visualize</code><div>open the interactive graph from chat</div></div>
       <div class="cmd-card"><code class="mono">greybeard visualize</code><div>interactive force-directed graph at localhost</div></div>
       <div class="cmd-card"><code class="mono">greybeard audit</code><div>same report, no agent needed — script it into CI</div></div>
       <div class="cmd-card"><code class="mono">greybeard update</code><div>self-updates daily in the background anyway</div></div>
@@ -946,6 +948,14 @@ svg.addEventListener("pointerup", () => {
     dragNode.pinned = true;
     render();
   }
+  dragNode = null;
+  downPos = null;
+  panStart = null;
+  svg.classList.remove("dragging");
+});
+// scroll takeover (touch-action: pan-y) cancels the pointer mid-gesture —
+// reset drag state or the next hover keeps panning with no button held
+svg.addEventListener("pointercancel", () => {
   dragNode = null;
   downPos = null;
   panStart = null;

@@ -81,7 +81,12 @@ var symbolRes = map[string][]*regexp.Regexp{
 		regexp.MustCompile(`(?m)^\s*module\s+([A-Z]\w*)`),
 	},
 	".java": {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
-	".kt":   {regexp.MustCompile(`public\s+(?:static\s+|final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
+	// Kotlin is public by default: no visibility keyword on most exported
+	// declarations, and top-level fun/object are first-class API surface.
+	".kt": {
+		regexp.MustCompile(`(?m)^(?:public\s+)?(?:data\s+|sealed\s+|abstract\s+|open\s+)*(?:class|interface|object|enum\s+class)\s+(\w+)`),
+		regexp.MustCompile(`(?m)^(?:public\s+)?(?:suspend\s+)?fun\s+(\w+)`),
+	},
 	".cs":   {regexp.MustCompile(`public\s+(?:static\s+|sealed\s+|abstract\s+|partial\s+)*(?:class|interface|enum|record)\s+(\w+)`)},
 	".php": {
 		regexp.MustCompile(`(?m)^\s*function\s+(\w+)\s*\(`),

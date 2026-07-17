@@ -19,6 +19,19 @@ jobs:
           go-version-file: go.mod
       # Never publish a red build.
       - run: go test ./...
+      # The plugin version must match the tag, or marketplace users keep old
+      # skill/command/hook text while binaries self-update past them. Bump
+      # plugin.json before tagging; this fails the release if it was missed.
+      - name: plugin.json version matches tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          plugin=$(node -p "require('./.claude-plugin/plugin.json').version")
+          if [ "$plugin" != "$tag" ]; then
+            echo "plugin.json version is $plugin but the tag is v$tag — bump .claude-plugin/plugin.json and re-tag" >&2
+            exit 1
+          fi
+      # Stale adapter copies must not ship either (a hotfix tag can bypass PR CI).
+      - run: node scripts/check-adapter-copies.js
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

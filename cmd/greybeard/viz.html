@@ -1,3 +1,4 @@
+<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>greybeard — graph</title>
@@ -76,7 +77,7 @@
   .wordmark span { color: var(--muted); font-weight: 400; }
   .stats { display: flex; gap: 14px; color: var(--ink-2); font-size: 12.5px; }
   .stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
-  .hint { color: var(--muted); font-size: 11.5px; }
+  .hint { color: var(--ink-2); font-size: 11.5px; }
 
   .legend { display: flex; gap: 4px; margin-left: auto; }
   .legend button {
@@ -98,7 +99,8 @@
   .swatch { width: 18px; height: 3px; border-radius: 2px; }
 
   main { position: relative; height: calc(100% - 45px); }
-  #canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  /* position: relative so the canvas paints above the absolutely-positioned watermark */
+  #canvas { position: relative; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
   #canvas.dragging { cursor: grabbing; }
 
   /* the old man, faded behind his own graph */
@@ -566,6 +568,14 @@ svg.addEventListener("pointerup", () => {
   panStart = null;
   svg.classList.remove("dragging");
 });
+// browser gesture takeover can cancel the pointer mid-drag — reset state or
+// the next hover keeps panning with no button held
+svg.addEventListener("pointercancel", () => {
+  dragNode = null;
+  downPos = null;
+  panStart = null;
+  svg.classList.remove("dragging");
+});
 
 // --- detail panel -----------------------------------------------------------------
 const panel = document.getElementById("panel");
@@ -609,7 +619,7 @@ function showTip(ev, html) {
   tip.innerHTML = html;
   tip.style.display = "block";
   const main = document.querySelector("main").getBoundingClientRect();
-  tip.style.left = Math.min(ev.clientX - main.left + 14, main.width - 340) + "px";
+  tip.style.left = Math.max(0, Math.min(ev.clientX - main.left + 14, main.width - 340)) + "px";
   tip.style.top = (ev.clientY - main.top + 14) + "px";
 }
 function hideTip() { tip.style.display = "none"; }

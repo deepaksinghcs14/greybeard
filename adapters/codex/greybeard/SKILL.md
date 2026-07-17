@@ -25,7 +25,7 @@ Codex has no session hooks, so indexing does not happen automatically here. If a
 
 Call the MCP tool exposed by the graph server (see `references/mcp-tools.md` for exact signatures). The three core queries:
 
-1. `get_related_repos(repo, max_hops)` — what repos are connected to this one, and how (import, API call, shared schema)
+1. `get_related_repos(repo, max_hops)` — what repos are connected to this one, and how (import, API call, shared schema, symbol reference)
 2. `get_callers_of(endpoint_or_symbol)` — reverse lookup: what calls this specific thing
 3. `get_schema_dependents(schema_name)` — what repos read/write a given shared schema
 
