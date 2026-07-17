@@ -14,7 +14,7 @@ import (
 // (hundreds of symbols once symbol extraction is populated).
 func BenchmarkScanRefs(b *testing.B) {
 	dir := b.TempDir()
-	syms := make([]string, 500)
+	syms := make([]string, 5000)
 	for i := range syms {
 		syms[i] = fmt.Sprintf("ExportedSymbol%03d", i)
 	}

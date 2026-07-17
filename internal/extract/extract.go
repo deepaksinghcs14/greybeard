@@ -688,25 +688,51 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 		}
 		return "(" + strings.Join(quoted, "|") + ")"
 	}
-	var readRe, writeRe, msgRe, symRe *regexp.Regexp
-	canonTable := map[string]string{} // lowercased capture -> needle as given ((?i) matches vary in case)
-	if len(tables) > 0 {
-		for _, t := range tables {
-			canonTable[strings.ToLower(t)] = t
+	var msgRe, symRe *regexp.Regexp
+	// Messages and symbols are word-boundary matches of plain identifiers.
+	// For a \w-only needle, \bname\b is exactly "some maximal \w-run in the
+	// file equals name" — so instead of a regex whose cost grows with the
+	// pool (the org-wide symbol pool runs to thousands), tokenize each file
+	// once and hash-check every word-run. Needles with non-word chars (rare)
+	// keep the alternation-regex path.
+	// Symbols are word-boundary-only deliberately: no call-site requirement
+	// (unlike paths, which need a quote) — genericity + org corroboration in
+	// computeRefs carries the precision burden instead, same as table names.
+	wordOnly := func(names []string) (words map[string]bool, rest []string) {
+		words = make(map[string]bool, len(names))
+		for _, n := range names {
+			plain := n != ""
+			for i := 0; i < len(n); i++ {
+				c := n[i]
+				if !(c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z') {
+					plain = false
+					break
+				}
+			}
+			if plain {
+				words[n] = true
+			} else {
+				rest = append(rest, n)
+			}
 		}
-		g := group(tables)
-		quote := `["'` + "`" + `]`
-		readRe = regexp.MustCompile(`(?i)\b(?:from|join)[\s"'` + "`" + `]+` + qualPrefix + quote + `?` + g + `\b`)
-		writeRe = regexp.MustCompile(`(?i)\b(?:insert\s+into|update|delete\s+from|merge\s+into|create\s+table(?:\s+if\s+not\s+exists)?)[\s"'` + "`" + `]+` + qualPrefix + quote + `?` + g + `\b`)
+		return words, rest
 	}
-	if len(messages) > 0 {
-		msgRe = regexp.MustCompile(`\b` + group(messages) + `\b`)
-	}
-	// word-boundary only, no call-site requirement (unlike paths, which need
-	// a quote) — genericity + org corroboration in computeRefs carries the
-	// precision burden instead, same as table names.
-	if len(symbols) > 0 {
-		symRe = regexp.MustCompile(`\b` + group(symbols) + `\b`)
+	msgWords, msgRest := wordOnly(messages)
+	symWords, symRest := wordOnly(symbols)
+	// Tables need SQL-keyword context, which the token pass can't judge —
+	// but a table name that could match \b-delimited always appears as a
+	// full token, so the token pass is an exact prefilter: the per-table
+	// context regexes (compiled once, lazily) run only on the rare file
+	// that mentions a candidate name at all. Table names are [A-Za-z_]\w*
+	// by construction (createTableRe), so none land in the regex fallback.
+	// keyed lowercase: table matching is case-insensitive (ORDERS is orders)
+	tblWords := map[string]string{} // lowercase -> needle as given
+	maxTbl := 0
+	for _, t := range tables {
+		tblWords[strings.ToLower(t)] = t
+		if len(t) > maxTbl {
+			maxTbl = len(t)
+		}
 	}
 	// tables merge read/write across files; read+write = read_write
 	addMode := func(t, mode string) {
@@ -717,6 +743,48 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 			tableHits[t] = "read_write"
 		}
 	}
+	nameRe := func(kw, t string) *regexp.Regexp {
+		return regexp.MustCompile(`(?i)\b(?:` + kw + `)[\s"'` + "`" + `]+` + qualPrefix + `["'` + "`" + `]?` + regexp.QuoteMeta(t) + `\b`)
+	}
+	readRes := map[string]*regexp.Regexp{}
+	writeRes := map[string]*regexp.Regexp{}
+	tableCtx := func(t, s string) {
+		if readRes[t] == nil {
+			readRes[t] = nameRe(`from|join`, t)
+			writeRes[t] = nameRe(`insert\s+into|update|delete\s+from|merge\s+into|create\s+table(?:\s+if\s+not\s+exists)?`, t)
+		}
+		if readRes[t].MatchString(s) {
+			addMode(t, "read")
+		}
+		if writeRes[t].MatchString(s) {
+			addMode(t, "write")
+		}
+	}
+	if len(msgRest) > 0 {
+		msgRe = regexp.MustCompile(`\b` + group(msgRest) + `\b`)
+	}
+	if len(symRest) > 0 {
+		symRe = regexp.MustCompile(`\b` + group(symRest) + `\b`)
+	}
+	isWord := func(c byte) bool {
+		return c == '_' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+	}
+	// scanTokens visits every maximal \w-run in s — one linear pass.
+	scanTokens := func(s string, visit func(tok string, start, end int)) {
+		for i := 0; i < len(s); {
+			if !isWord(s[i]) {
+				i++
+				continue
+			}
+			j := i + 1
+			for j < len(s) && isWord(s[j]) {
+				j++
+			}
+			visit(s[i:j], i, j)
+			i = j
+		}
+	}
+	var lowBuf []byte // reused across tokens; map lookup via string(lowBuf) doesn't allocate
 
 	walkSources(root, maxScanFileSize, func(path string) {
 		base := filepath.Base(path)
@@ -747,13 +815,45 @@ func ScanRefs(root string, paths, tables, messages, symbols []string) (pathHits 
 				}
 			}
 		}
-		if readRe != nil {
-			for _, m := range readRe.FindAllStringSubmatch(s, -1) {
-				addMode(canonTable[strings.ToLower(m[1])], "read")
-			}
-			for _, m := range writeRe.FindAllStringSubmatch(s, -1) {
-				addMode(canonTable[strings.ToLower(m[1])], "write")
-			}
+		if len(symWords) > 0 || len(tblWords) > 0 || (isProto && len(msgWords) > 0) {
+			scanTokens(s, func(tok string, i, j int) {
+				if symWords[tok] {
+					symbolHits[tok] = true
+				}
+				if isProto && msgWords[tok] {
+					messageHits[tok] = true
+				}
+				if len(tblWords) == 0 || len(tok) > maxTbl {
+					return
+				}
+				lowBuf = lowBuf[:0]
+				for k := 0; k < len(tok); k++ {
+					c := tok[k]
+					if 'A' <= c && c <= 'Z' {
+						c += 32
+					}
+					lowBuf = append(lowBuf, c)
+				}
+				t, ok := tblWords[string(lowBuf)]
+				if !ok || tableHits[t] == "read_write" {
+					return
+				}
+				// The SQL keyword context sits within a short window before
+				// the name — run the context regexes on that window, not the
+				// whole file. Trim a word truncated by the cut so the window
+				// edge can't fabricate a \b for the keyword.
+				// ponytail: 160 bytes covers real formatting; a keyword
+				// separated from its table by more whitespace than that is
+				// out of scope.
+				start := i - 160
+				if start < 0 {
+					start = 0
+				}
+				for start < i && isWord(s[start]) {
+					start++
+				}
+				tableCtx(t, s[start:j])
+			})
 		}
 		if isProto && msgRe != nil {
 			for _, m := range msgRe.FindAllString(s, -1) {
